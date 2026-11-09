@@ -107,7 +107,7 @@ async function search(query, options = {}) {
   const searchUrl = `https://www.alicesw.com/search.html?q=${encodeURIComponent(query)}&f=_all`;
   const { html, url } = await fetchHtml(searchUrl, {
     headers: createBrowserHeaders(),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const items = [];

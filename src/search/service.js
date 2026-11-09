@@ -1,5 +1,7 @@
 const { SEARCH_SOURCES } = require('./registry');
 
+const SEARCH_TIMEOUT_MS = 30000;
+
 function getSourceLabel(source) {
   return source.publicLabel || source.label;
 }
@@ -24,6 +26,9 @@ async function searchBooks(input, options = {}) {
   throwIfAborted(options.signal);
 
   const activeSources = SEARCH_SOURCES;
+  const sourceTimeoutMs = Number.isFinite(options.sourceTimeoutMs)
+    ? options.sourceTimeoutMs
+    : SEARCH_TIMEOUT_MS;
   let completed = 0;
   const groups = new Array(activeSources.length);
   options.onProgress?.({
@@ -36,7 +41,7 @@ async function searchBooks(input, options = {}) {
       try {
         throwIfAborted(options.signal);
         const mode = provider.searchModes[0];
-        const items = await mode.search(query, { signal: options.signal });
+        const items = await runProviderSearch(mode, query, options.signal, sourceTimeoutMs);
         group = {
           source: provider.source,
           label: getSourceLabel(provider),
@@ -56,6 +61,7 @@ async function searchBooks(input, options = {}) {
       } finally {
         completed += 1;
         groups[index] = group;
+        options.onPartialResults?.(createSearchPage(query, activeSources, groups, completed));
         options.onProgress?.({
           fraction: 0.1 + (completed / activeSources.length) * 0.85,
           label: `已完成 ${completed}/${activeSources.length} 个网站`
@@ -65,7 +71,34 @@ async function searchBooks(input, options = {}) {
   );
 
   throwIfAborted(options.signal);
-  return createSearchPage(query, activeSources, groups);
+  return createSearchPage(query, activeSources, groups, activeSources.length);
+}
+
+function runProviderSearch(mode, query, signal, timeoutMs) {
+  const controller = new AbortController();
+  let timeout;
+  const abort = () => controller.abort();
+
+  if (signal?.aborted) {
+    abort();
+  } else {
+    signal?.addEventListener('abort', abort, { once: true });
+  }
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`搜索超时（${Math.round(timeoutMs / 1000)} 秒）。`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    Promise.resolve().then(() => mode.search(query, { signal: controller.signal })),
+    timeoutPromise
+  ]).finally(() => {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+  });
 }
 
 function throwIfAborted(signal) {
@@ -76,8 +109,9 @@ function throwIfAborted(signal) {
   }
 }
 
-function createSearchPage(query, sources, sourceGroups) {
+function createSearchPage(query, sources, sourceGroups, completedCount = sourceGroups.length) {
   const groups = sourceGroups
+    .filter(Boolean)
     .slice(0, sources.length)
     .sort((left, right) => compareSearchGroups(left, right, query));
 
@@ -87,6 +121,7 @@ function createSearchPage(query, sources, sourceGroups) {
     url: '',
     query,
     title: `搜索：${query}`,
+    pendingCount: Math.max(0, sources.length - completedCount),
     groups,
     items: groups
       .flatMap((group) => group.items)

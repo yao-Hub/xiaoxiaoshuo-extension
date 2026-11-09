@@ -25,7 +25,7 @@ async function search(query, options = {}) {
       ...createMobileHeaders(),
       accept: 'application/json, text/plain, */*'
     },
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const list = [

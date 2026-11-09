@@ -8,7 +8,7 @@ async function search(query, options = {}) {
   searchUrl.searchParams.set('page_size', '15');
   const data = await fetchJson(searchUrl.toString(), {
     headers: createJsonHeaders('https://www.qimao.com/', 'https://www.qimao.com'),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const list =

@@ -224,6 +224,8 @@ const WEBVIEW_STYLES = String.raw`
     }
 
     .chapter-view,
+    .catalog-unavailable-view,
+    .bookshelf-view,
     .list-view,
     .search-view,
     .history-view {
@@ -239,6 +241,23 @@ const WEBVIEW_STYLES = String.raw`
       font-weight: 650;
       line-height: 1.35;
       letter-spacing: 0;
+    }
+
+    .chapter-title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .chapter-title-row h1 {
+      flex: 1;
+      margin: 0;
+    }
+
+    .chapter-shelf-button {
+      margin-top: 2px;
     }
 
     .source {
@@ -285,11 +304,10 @@ const WEBVIEW_STYLES = String.raw`
 
     .search-alert {
       margin: -10px 0 22px;
-      padding: 10px 12px;
+      padding: 0;
       color: var(--vscode-inputValidation-warningForeground);
-      background: var(--vscode-inputValidation-warningBackground);
-      border: 1px solid var(--vscode-inputValidation-warningBorder);
-      border-radius: 5px;
+      background: none;
+      border: 0;
       line-height: 1.5;
     }
 
@@ -422,6 +440,35 @@ const WEBVIEW_STYLES = String.raw`
       margin-top: 28px;
       padding-top: 20px;
       border-top: 1px solid var(--border);
+    }
+
+    .bookshelf-view h1 {
+      margin-bottom: 18px;
+    }
+
+    .bookshelf-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .bookshelf-row:last-child {
+      border-bottom: 0;
+    }
+
+    .bookshelf-remove {
+      padding: 5px 8px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .bookshelf-remove:hover {
+      color: var(--reader-fg);
     }
 
     .history-page-section h2 {
@@ -627,6 +674,8 @@ const WEBVIEW_STYLES = String.raw`
 
     @media (max-width: 720px) {
       .chapter-view,
+      .catalog-unavailable-view,
+      .bookshelf-view,
       .list-view,
       .search-view,
       .history-view {
@@ -660,7 +709,8 @@ const WEBVIEW_STYLES = String.raw`
         width: 28px;
       }
 
-      #historyToggle {
+      #historyToggle,
+      #bookshelfToggle {
         padding-right: 7px;
         padding-left: 7px;
       }

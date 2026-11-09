@@ -11,7 +11,7 @@ async function search(query, options = {}) {
 
   const data = await fetchJson(searchUrl.toString(), {
     headers: createJsonHeaders('https://fanqienovel.com/'),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const list = data && data.data && Array.isArray(data.data.ret_data) ? data.data.ret_data : [];

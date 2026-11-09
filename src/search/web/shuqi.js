@@ -9,7 +9,7 @@ async function search(query, options = {}) {
   searchUrl.searchParams.set('keyword', query);
   const { html } = await fetchHtml(searchUrl.toString(), {
     headers: createBrowserHeaders(),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const items = [];

@@ -24,7 +24,7 @@ async function search(query, options = {}) {
   const searchUrl = `https://books.l3zc.com/search?query=${encodeURIComponent(query)}`;
   const { html, url } = await fetchHtml(searchUrl, {
     headers: createBrowserHeaders(),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const items = [];

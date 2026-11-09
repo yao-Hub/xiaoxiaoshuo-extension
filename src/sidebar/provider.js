@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const { isLikelyUrl, normalizeUrl } = require('../core/url');
 const { searchBooks } = require('../search/service');
+const { BookshelfStore } = require('./stores/bookshelf-store');
 const { HistoryStore } = require('./stores/history-store');
 const { NavigationStore } = require('./stores/navigation-store');
 const { PageCache } = require('./stores/page-cache');
@@ -11,6 +12,7 @@ const {
   renderHomeHtml,
   renderLoadingHtml,
   renderPageHtml,
+  renderSearchBody,
   renderSearchErrorHtml,
   renderSearchLoadingHtml
 } = require('../ui/renderer');
@@ -22,6 +24,7 @@ class NovelReaderSidebarProvider {
   constructor(extensionUri, storage) {
     this.extensionUri = extensionUri;
     this.storage = storage;
+    this.bookshelfStore = new BookshelfStore(storage);
     this.historyStore = new HistoryStore(storage);
     this.pageCache = new PageCache();
     this.navigationStore = new NavigationStore();
@@ -41,6 +44,10 @@ class NovelReaderSidebarProvider {
 
   set history(value) {
     this.historyStore.history = value;
+  }
+
+  get bookshelf() {
+    return this.bookshelfStore.books;
   }
 
   get searchHistory() {
@@ -125,6 +132,21 @@ class NovelReaderSidebarProvider {
         return;
       }
 
+      if (message.command === 'bookshelf') {
+        await this.showBookshelf();
+        return;
+      }
+
+      if (message.command === 'addBookshelf') {
+        await this.addCurrentPageToBookshelf();
+        return;
+      }
+
+      if (message.command === 'removeBookshelf') {
+        await this.removeBookshelfItem(message.key);
+        return;
+      }
+
       if (message.command === 'refresh') {
         await this.refresh();
         return;
@@ -162,12 +184,32 @@ class NovelReaderSidebarProvider {
           return;
         }
 
-        await this.openUrl(normalized.url, { preserveSearchInput: true });
+        const readingValue = String(message.readingUrl || '').trim();
+        const normalizedReading = readingValue ? normalizeUrl(readingValue) : undefined;
+        const fallbackUrl = normalizedReading?.ok ? normalizedReading.url : '';
+        if (message.catalogMissing && fallbackUrl) {
+          await this.showCatalogUnavailablePage(
+            {
+              title: message.title,
+              readingUrl: fallbackUrl
+            },
+            true
+          );
+          return;
+        }
+
+        await this.openUrl(normalized.url, {
+          preserveSearchInput: true,
+          fallbackUrl,
+          title: message.title
+        });
         return;
       }
     });
 
-    if (this.currentMode === 'history') {
+    if (this.currentMode === 'bookshelf') {
+      this.showBookshelf(false);
+    } else if (this.currentMode === 'history') {
       this.showHistory();
     } else if (this.currentMode === 'title' && this.currentQuery) {
       this.search(this.currentQuery, true);
@@ -229,8 +271,35 @@ class NovelReaderSidebarProvider {
     }
 
     if (this.view) {
-      await this.loadPage(normalized.url);
+      await this.loadPage(normalized.url, false, options);
     }
+  }
+
+  async showCatalogUnavailablePage(pageInfo, pushCurrent = false) {
+    if (!this.view) {
+      return;
+    }
+    if (pushCurrent) {
+      this.pushCurrentPage();
+    }
+
+    this.currentUrl = '';
+    this.currentMode = 'url';
+    this.currentQuery = '';
+    this.currentPage = {
+      kind: 'catalog-unavailable',
+      source: 'app',
+      url: '',
+      title: String(pageInfo.title || '').trim() || '暂无目录',
+      readingUrl: pageInfo.readingUrl
+    };
+    ++this.loadSequence;
+    this.view.webview.html = renderPageHtml(
+      this.view.webview,
+      this.withNavigation(this.currentPage),
+      this.history,
+      this.searchHistory
+    );
   }
 
   async search(query, pushCurrent = true) {
@@ -260,23 +329,47 @@ class NovelReaderSidebarProvider {
       this.forwardStack.length > 0
     );
     const reportProgress = this.createProgressReporter(sequence);
+    let hasStreamedResults = false;
 
     try {
       const page = await searchBooks(value, {
         signal: requestController.signal,
-        onProgress: reportProgress
+        onProgress: reportProgress,
+        onPartialResults: (partialPage) => {
+          if (sequence !== this.loadSequence || !this.view) {
+            return;
+          }
+          this.currentPage = partialPage;
+          if (!partialPage.items.length) {
+            return;
+          }
+          hasStreamedResults = true;
+          this.view.webview.postMessage({
+            command: 'searchResults',
+            html: renderSearchBody(partialPage),
+            complete: false
+          });
+        }
       });
       reportProgress({ fraction: 0.99, label: '正在生成搜索结果' });
       if (sequence !== this.loadSequence || !this.view) {
         return;
       }
       this.currentPage = page;
-      this.view.webview.html = renderPageHtml(
-        this.view.webview,
-        this.withNavigation(page),
-        this.history,
-        this.searchHistory
-      );
+      if (hasStreamedResults) {
+        this.view.webview.postMessage({
+          command: 'searchResults',
+          html: renderSearchBody(page),
+          complete: true
+        });
+      } else {
+        this.view.webview.html = renderPageHtml(
+          this.view.webview,
+          this.withNavigation(page),
+          this.history,
+          this.searchHistory
+        );
+      }
     } catch (error) {
       if (sequence !== this.loadSequence || !this.view) {
         return;
@@ -349,6 +442,9 @@ class NovelReaderSidebarProvider {
     } else if (page.kind === 'history') {
       this.currentMode = 'history';
       this.currentQuery = '';
+    } else if (page.kind === 'bookshelf') {
+      this.currentMode = 'bookshelf';
+      this.currentQuery = '';
     } else {
       this.currentMode = 'url';
       this.currentQuery = '';
@@ -395,8 +491,76 @@ class NovelReaderSidebarProvider {
     );
   }
 
+  async showBookshelf(pushCurrent = true) {
+    if (!this.view) {
+      return;
+    }
+
+    this.abortActiveRequest();
+    if (pushCurrent && this.currentPage?.kind !== 'bookshelf') {
+      this.pushCurrentPage();
+    }
+    const page = {
+      kind: 'bookshelf',
+      source: 'app',
+      url: '',
+      title: '书架',
+      items: this.bookshelf
+    };
+    this.currentPage = page;
+    this.currentMode = 'bookshelf';
+    this.currentQuery = '';
+    ++this.loadSequence;
+    this.view.webview.html = renderPageHtml(
+      this.view.webview,
+      this.withNavigation(page),
+      this.history,
+      this.searchHistory
+    );
+  }
+
+  async addCurrentPageToBookshelf() {
+    if (!this.view || !this.currentPage || this.currentPage.kind !== 'chapter') {
+      return;
+    }
+
+    await this.bookshelfStore.addPage(this.currentPage);
+    this.currentPage = {
+      ...this.currentPage,
+      isInBookshelf: true
+    };
+    this.view.webview.postMessage({
+      command: 'bookshelfState',
+      added: true
+    });
+    this.showToast('已加入书架');
+  }
+
+  async removeBookshelfItem(key) {
+    await this.bookshelfStore.remove(key);
+    if (!this.view || !this.currentPage || this.currentPage.kind !== 'bookshelf') {
+      return;
+    }
+
+    this.currentPage = {
+      ...this.currentPage,
+      items: this.bookshelf
+    };
+    this.view.webview.html = renderPageHtml(
+      this.view.webview,
+      this.withNavigation(this.currentPage),
+      this.history,
+      this.searchHistory
+    );
+  }
+
   async refresh() {
     if (!this.view) {
+      return;
+    }
+
+    if (this.currentMode === 'bookshelf') {
+      await this.showBookshelf(false);
       return;
     }
 
@@ -427,7 +591,7 @@ class NovelReaderSidebarProvider {
     );
   }
 
-  async loadPage(url, force = false) {
+  async loadPage(url, force = false, pageOptions = {}) {
     if (!this.view) {
       return;
     }
@@ -454,10 +618,29 @@ class NovelReaderSidebarProvider {
       );
       const reportProgress = this.createProgressReporter(sequence);
       const page = await this.fetchPage(url, reportProgress, requestController.signal);
+      if (
+        pageOptions.fallbackUrl &&
+        page.kind === 'list' &&
+        (!Array.isArray(page.items) || !page.items.length)
+      ) {
+        await this.showCatalogUnavailablePage({
+          title: pageOptions.title,
+          readingUrl: pageOptions.fallbackUrl
+        });
+        return;
+      }
       reportProgress({ fraction: 0.99, label: '正在渲染页面' });
       await this.renderLoadedPage(page, url, sequence);
     } catch (error) {
       if (sequence !== this.loadSequence || !this.view) {
+        return;
+      }
+
+      if (pageOptions.fallbackUrl && isCatalogUnavailableError(error)) {
+        await this.showCatalogUnavailablePage({
+          title: pageOptions.title,
+          readingUrl: pageOptions.fallbackUrl
+        });
         return;
       }
 
@@ -570,7 +753,13 @@ class NovelReaderSidebarProvider {
   }
 
   withNavigation(page) {
-    return this.navigationStore.withState(page, this.searchInputQuery);
+    const state = this.navigationStore.withState(page, this.searchInputQuery);
+    return page.kind === 'chapter'
+      ? {
+          ...state,
+          isInBookshelf: this.bookshelfStore.hasPage(page)
+        }
+      : state;
   }
   async rememberPage(page, fallbackUrl) {
     await this.historyStore.rememberPage(page, fallbackUrl);
@@ -612,6 +801,11 @@ class NovelReaderSidebarProvider {
       });
     };
   }
+}
+
+function isCatalogUnavailableError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP 404|没有识别到(?:章节)?目录|没有找到(?:章节)?目录|暂无目录/i.test(message);
 }
 
 module.exports = {

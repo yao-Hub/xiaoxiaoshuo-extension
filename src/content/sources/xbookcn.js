@@ -236,7 +236,7 @@ async function search(query, options = {}) {
   const searchUrl = `https://book.xbookcn.net/search?q=${encodeURIComponent(query)}`;
   const response = await fetchXbookPage(searchUrl, {
     edgeOnly: true,
-    timeoutMs: 8000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const items = [];

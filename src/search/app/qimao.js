@@ -18,7 +18,7 @@ async function search(query, options = {}) {
 
   const data = await fetchJson(`${SEARCH_API}?${queryEncode(params)}`, {
     headers: requestHeaders('00000000'),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const list = data && data.data && Array.isArray(data.data.books) ? data.data.books : [];
@@ -28,7 +28,8 @@ async function search(query, options = {}) {
     .slice(0, 12)
     .map((item) => {
       const bookId = String(item.id);
-      const catalogUrl = `https://www.qimao.com/shuku/${bookId}/`;
+      const hasWebCatalog = String(item.reader_type) === '0';
+      const catalogUrl = hasWebCatalog ? `https://www.qimao.com/shuku/${bookId}/` : '';
       return {
         text: normalizeText(item.original_title || htmlToText(item.title || '')),
         meta: [htmlToText(item.author || '').trim(), htmlToText(item.sub_title || '').trim()]
@@ -37,7 +38,7 @@ async function search(query, options = {}) {
         actionText: '章节选择',
         coverUrl: String(item.image_link || ''),
         chaptersUrl: catalogUrl,
-        url: catalogUrl
+        url: hasWebCatalog ? catalogUrl : `https://www.qimao.com/app/book/${bookId}/read/1/`
       };
     });
 }

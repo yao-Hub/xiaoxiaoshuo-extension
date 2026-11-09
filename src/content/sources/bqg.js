@@ -204,7 +204,7 @@ async function load(url, options = {}) {
 async function search(query, options = {}) {
   const url = new URL('/api/search', BASE_URL);
   url.searchParams.set('q', query);
-  const data = await fetchApi(url.toString(), options);
+  const data = await fetchApi(url.toString(), { ...options, timeoutMs: 30000 });
   const items = data && Array.isArray(data.data) ? data.data : [];
 
   return items

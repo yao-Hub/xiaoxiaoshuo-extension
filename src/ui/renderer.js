@@ -22,6 +22,10 @@ function getPanelTitle(page) {
     return '历史';
   }
 
+  if (page && page.kind === 'bookshelf') {
+    return '书架';
+  }
+
   if (!page || !page.kind) {
     return '小小小说';
   }
@@ -32,6 +36,10 @@ function getPanelTitle(page) {
 
   if (page.kind === 'chapter') {
     return page.title ? `阅读: ${page.title}` : '阅读';
+  }
+
+  if (page.kind === 'catalog-unavailable') {
+    return page.title ? `阅读: ${page.title}` : '暂无目录';
   }
 
   return '小小小说';
@@ -176,6 +184,21 @@ function renderPageHtml(webview, page, history = [], searchHistory = []) {
     });
   }
 
+  if (page.kind === 'bookshelf') {
+    return renderShell(webview, {
+      kind: 'bookshelf',
+      url: '',
+      value: '',
+      title: '书架',
+      pageTitle: '书架',
+      backAvailable: Boolean(page.backAvailable),
+      forwardAvailable: Boolean(page.forwardAvailable),
+      history,
+      searchHistory,
+      body: renderBookshelfBody(page.items)
+    });
+  }
+
   if (page.kind === 'list') {
     return renderShell(webview, {
       kind: 'list',
@@ -188,6 +211,21 @@ function renderPageHtml(webview, page, history = [], searchHistory = []) {
       history,
       searchHistory,
       body: renderListBody(page)
+    });
+  }
+
+  if (page.kind === 'catalog-unavailable') {
+    return renderShell(webview, {
+      kind: 'catalog-unavailable',
+      url: '',
+      value: page.title || '暂无目录',
+      title: '暂无目录',
+      pageTitle: getPanelTitle(page),
+      backAvailable: Boolean(page.backAvailable),
+      forwardAvailable: Boolean(page.forwardAvailable),
+      history,
+      searchHistory,
+      body: renderCatalogUnavailableBody(page)
     });
   }
 
@@ -273,6 +311,28 @@ function renderHistoryPageBody(history, _searchHistory) {
     </section>`;
 }
 
+function renderBookshelfBody(books) {
+  const items = Array.isArray(books) ? books : [];
+  const rows = items
+    .map(
+      (item) => `
+      <div class="bookshelf-row">
+        <button class="history-page-link bookshelf-link" type="button" data-open-url="${escapeAttribute(item.url)}">
+          <span class="history-title">${escapeHtml(item.title || item.url)}</span>
+          <span class="history-url">${escapeHtml(item.author || item.url)}</span>
+        </button>
+        <button class="bookshelf-remove" type="button" data-remove-bookshelf="${escapeAttribute(item.key)}">移出</button>
+      </div>`
+    )
+    .join('');
+
+  return `
+    <section class="bookshelf-view">
+      <h1>书架</h1>
+      ${items.length ? `<div class="bookshelf-list">${rows}</div>` : '<div class="history-empty">书架为空</div>'}
+    </section>`;
+}
+
 function renderSearchSuggestions(searchHistory) {
   const queryItems = Array.isArray(searchHistory) ? searchHistory.slice(0, 20) : [];
   if (!queryItems.length) {
@@ -302,30 +362,45 @@ function renderSearchSuggestions(searchHistory) {
 function renderSearchBody(page) {
   const groups = Array.isArray(page.groups) ? page.groups : [];
   const failedCount = groups.filter((group) => group.error).length;
+  const pendingCount = Math.max(0, Number(page.pendingCount) || 0);
   const items = Array.isArray(page.items)
     ? page.items
     : groups.flatMap((group) => (Array.isArray(group.items) ? group.items : []));
   const rows = items
-    .map(
-      (item) => `
+    .map((item) => {
+      const readingUrl = item.url || '';
+      const catalogUrl = item.chaptersUrl || '';
+      return `
       <div class="search-row">
-        <button class="search-link" type="button" data-open-url="${escapeAttribute(item.chaptersUrl || item.url)}">
+        <button class="search-link" type="button" data-open-url="${escapeAttribute(catalogUrl || readingUrl)}" data-reading-url="${escapeAttribute(readingUrl)}" data-item-title="${escapeAttribute(item.text || '')}"${catalogUrl ? '' : ' data-catalog-missing="true"'}>
           <span class="search-title">${escapeHtml(item.text || item.url)}</span>
           ${item.meta ? `<span class="search-meta">${escapeHtml(item.meta)}</span>` : ''}
         </button>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
-  const summary = `共找到 ${items.length} 个结果${failedCount ? `，${failedCount} 个网站搜索失败` : ''}。`;
+  const failureSummary = failedCount ? `，${failedCount} 个网站搜索失败` : '';
+  const summary = pendingCount
+    ? `已找到 ${items.length} 个结果${failureSummary}，正在继续搜索…`
+    : `共找到 ${items.length} 个结果${failureSummary}。`;
 
   return `
     <section class="search-view">
       <h1>“${escapeHtml(page.query || '')}” 的搜索结果</h1>
       <p class="search-summary">${summary}</p>
-      ${failedCount ? '<div class="search-alert">部分网站搜索失败，可能需要科学上网工具。连接后请重新加载 VS Code 窗口再试。</div>' : ''}
+      ${failedCount ? '<div class="search-alert">部分结果搜索失败，可能需要科学上网工具。连接后请重新加载 VS Code 窗口再试。</div>' : ''}
       <div class="search-results-flat">
         ${rows || '<div class="search-empty">没有找到相关作品</div>'}
       </div>
+    </section>`;
+}
+
+function renderCatalogUnavailableBody(page) {
+  return `
+    <section class="catalog-unavailable-view">
+      <h1>${escapeHtml(page.title || '暂无目录')}</h1>
+      <div class="status">暂无目录</div>
+      <button class="button catalog-start-button" type="button" data-open-url="${escapeAttribute(page.readingUrl)}">开始阅读</button>
     </section>`;
 }
 
@@ -402,7 +477,10 @@ function renderChapterBodyWithToc(page) {
 
   return `
     <article class="chapter-view">
-      <h1>${escapeHtml(page.title || '阅读')}</h1>
+      <div class="chapter-title-row">
+        <h1>${escapeHtml(page.title || '阅读')}</h1>
+        <button class="button chapter-shelf-button" type="button" data-add-bookshelf ${page.isInBookshelf ? 'disabled' : ''}>${page.isInBookshelf ? '已在书架' : '加入书架'}</button>
+      </div>
       <p class="source">${escapeHtml(page.url || '')}</p>
       ${renderChapterNavigation(page, 'top')}
       <div class="content">${content}</div>
@@ -491,6 +569,7 @@ function renderShell(webview, page) {
         </svg>
       </button>
       <button class="button" id="historyToggle" type="button" title="历史记录" aria-expanded="false">历史</button>
+      <button class="button" id="bookshelfToggle" type="button" title="我的书架" aria-expanded="false">书架</button>
     </form>
     ${renderSearchSuggestions(searchHistory)}
     ${loadingProgress}
@@ -511,6 +590,7 @@ module.exports = {
   renderHomeHtml,
   renderLoadingHtml,
   renderPageHtml,
+  renderSearchBody,
   renderSearchErrorHtml,
   renderSearchLoadingHtml
 };

@@ -5,7 +5,7 @@ async function search(query, options = {}) {
   const searchUrl = `https://m.qidian.com/search?kw=${encodeURIComponent(query)}`;
   const { html, url } = await fetchHtml(searchUrl, {
     headers: createMobileHeaders(),
-    timeoutMs: 15000,
+    timeoutMs: 30000,
     signal: options.signal
   });
   const items = [];

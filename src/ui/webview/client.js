@@ -10,6 +10,7 @@ const CLIENT_SCRIPT = String.raw`
     const forward = document.getElementById('forward');
     const refresh = document.getElementById('refresh');
     const historyToggle = document.getElementById('historyToggle');
+    const bookshelfToggle = document.getElementById('bookshelfToggle');
     const toast = document.getElementById('toast');
     const progressElement = document.querySelector('.loading-progress');
     const progressBar = document.querySelector('.loading-progress-bar');
@@ -65,7 +66,28 @@ const CLIENT_SCRIPT = String.raw`
       vscode.postMessage({ command: 'history' });
     });
 
+    bookshelfToggle.addEventListener('click', () => {
+      vscode.postMessage({ command: 'bookshelf' });
+    });
+
     document.addEventListener('click', (event) => {
+      const removeBookshelfTarget = event.target && event.target.closest ? event.target.closest('[data-remove-bookshelf]') : null;
+      if (removeBookshelfTarget) {
+        event.preventDefault();
+        vscode.postMessage({
+          command: 'removeBookshelf',
+          key: removeBookshelfTarget.getAttribute('data-remove-bookshelf') || ''
+        });
+        return;
+      }
+
+      const addBookshelfTarget = event.target && event.target.closest ? event.target.closest('[data-add-bookshelf]') : null;
+      if (addBookshelfTarget) {
+        event.preventDefault();
+        vscode.postMessage({ command: 'addBookshelf' });
+        return;
+      }
+
       const manageToggle = event.target && event.target.closest ? event.target.closest('[data-toggle-history-management]') : null;
       if (manageToggle) {
         event.preventDefault();
@@ -185,16 +207,44 @@ const CLIENT_SCRIPT = String.raw`
         return;
       }
 
-      if (target.classList.contains('item-link') || target.classList.contains('search-link') || target.classList.contains('nav-button') || target.classList.contains('toc-link') || target.classList.contains('history-link') || target.classList.contains('history-page-link')) {
+      if (target.classList.contains('item-link') || target.classList.contains('search-link') || target.classList.contains('catalog-start-button') || target.classList.contains('nav-button') || target.classList.contains('toc-link') || target.classList.contains('history-link') || target.classList.contains('history-page-link')) {
         event.preventDefault();
         hideToast();
-        vscode.postMessage({ command: 'openItem', url });
+        vscode.postMessage({
+          command: 'openItem',
+          url,
+          readingUrl: target.getAttribute('data-reading-url') || '',
+          title: target.getAttribute('data-item-title') || '',
+          catalogMissing: target.hasAttribute('data-catalog-missing')
+        });
       }
     });
 
     window.addEventListener('message', (event) => {
       if (event.data && event.data.command === 'toast') {
         showToast(event.data.message);
+        return;
+      }
+
+      if (event.data && event.data.command === 'searchResults') {
+        const readerShell = document.querySelector('.reader-shell');
+        if (readerShell) {
+          const scrollTop = readerShell.scrollTop;
+          readerShell.innerHTML = event.data.html;
+          readerShell.scrollTop = scrollTop;
+        }
+        if (event.data.complete && progressElement) {
+          progressElement.remove();
+        }
+        return;
+      }
+
+      if (event.data && event.data.command === 'bookshelfState') {
+        const button = document.querySelector('[data-add-bookshelf]');
+        if (button && event.data.added) {
+          button.disabled = true;
+          button.textContent = '已在书架';
+        }
         return;
       }
 

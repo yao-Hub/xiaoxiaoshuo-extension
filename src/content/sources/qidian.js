@@ -99,6 +99,8 @@ async function load(url, options = {}) {
     title:
       authorName && bookTitle ? `${chapterTitle} | ${authorName}《${bookTitle}》` : chapterTitle,
     content,
+    bookTitle,
+    author: authorName,
     prevUrl: toChapterUrl(bookId, chapterInfo.prev),
     nextUrl: toChapterUrl(bookId, chapterInfo.next),
     catalogUrl: `https://m.qidian.com/book/${bookId}/catalog/`

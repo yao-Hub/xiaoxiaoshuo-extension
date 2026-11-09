@@ -57,7 +57,7 @@ function fetchSearchData(url, headers, signal) {
     timeout = setTimeout(() => {
       const error = new Error('接口请求超时。');
       request.destroy(error);
-    }, 15000);
+    }, 30000);
     request.on('close', cleanup);
     request.on('error', reject);
 
