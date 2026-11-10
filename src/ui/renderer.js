@@ -144,7 +144,7 @@ function renderHomeHtml(
     forwardAvailable,
     title: '小小小说',
     pageTitle: '小小小说',
-    body: '<div class="status">在上方输入书名或地址，然后点击读取。</div>'
+    body: '<div class="status">在上方输入书名或地址，然后按回车读取。</div>'
   });
 }
 
