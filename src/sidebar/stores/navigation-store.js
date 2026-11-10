@@ -15,7 +15,7 @@ class NavigationStore {
   }
 
   pushCurrent(page) {
-    if (page && page.kind === 'history') {
+    if (page && ['history', 'bookshelf'].includes(page.kind)) {
       this.forwardStack = [];
       return;
     }
@@ -33,7 +33,7 @@ class NavigationStore {
   }
 
   pushForward(page) {
-    if (!page || page.kind === 'history') {
+    if (!page || ['history', 'bookshelf'].includes(page.kind)) {
       return;
     }
     this.forwardStack.push(page);

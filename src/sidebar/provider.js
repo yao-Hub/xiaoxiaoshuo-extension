@@ -497,7 +497,7 @@ class NovelReaderSidebarProvider {
     }
 
     this.abortActiveRequest();
-    if (pushCurrent && this.currentPage?.kind !== 'bookshelf') {
+    if (pushCurrent) {
       this.pushCurrentPage();
     }
     const page = {

@@ -398,3 +398,12 @@ test('navigation store maintains bounded back and forward state', () => {
   });
   assert.equal(navigation.forwardAvailable, false);
 });
+
+test('bookshelf pages do not enter route history', () => {
+  const navigation = new NavigationStore();
+  navigation.pushCurrent({ kind: 'bookshelf' });
+  navigation.pushForward({ kind: 'bookshelf' });
+
+  assert.equal(navigation.backAvailable, false);
+  assert.equal(navigation.forwardAvailable, false);
+});
