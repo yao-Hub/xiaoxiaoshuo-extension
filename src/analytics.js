@@ -2,13 +2,15 @@ const { execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const { promisify } = require('node:util');
-const vscode = require('vscode');
 
 const execFileAsync = promisify(execFile);
+const ANALYTICS_URL = 'https://xiaoxiaoshuo.top/api/extension/events';
 const MACHINE_ID_STATE_KEY = 'xiaoxiaoshuo.pluginMachineId';
 const ANALYTICS_DELAY_MS = 3000;
 const INVALID_SERIALS = new Set([
+  '00000000-0000-0000-0000-000000000000',
   'DEFAULT STRING',
+  'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF',
   'NONE',
   'NOT APPLICABLE',
   'SYSTEM SERIAL NUMBER',
@@ -37,24 +39,44 @@ async function readCommand(command, args) {
   }
 }
 
-async function readMotherboardId() {
+async function readFileIfPresent(filePath) {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function readStableMachineId() {
   if (process.platform === 'win32') {
-    return readCommand('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '(Get-CimInstance -ClassName Win32_BaseBoard).SerialNumber'
-    ]);
+    const commands = [
+      '(Get-CimInstance -ClassName Win32_BaseBoard).SerialNumber',
+      '(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID',
+      "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid).MachineGuid"
+    ];
+    for (const command of commands) {
+      const machineId = normalizeMachineId(
+        await readCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command])
+      );
+      if (machineId) {
+        return machineId;
+      }
+    }
+    return '';
   }
   if (process.platform === 'linux') {
-    try {
-      return await fs.readFile('/sys/devices/virtual/dmi/id/board_serial', 'utf8');
-    } catch {
-      return '';
+    const files = ['/sys/devices/virtual/dmi/id/board_serial', '/sys/class/dmi/id/product_uuid'];
+    for (const filePath of files) {
+      const machineId = normalizeMachineId(await readFileIfPresent(filePath));
+      if (machineId) {
+        return machineId;
+      }
     }
+    return '';
   }
   if (process.platform === 'darwin') {
-    return readCommand('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice']);
+    const value = await readCommand('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice']);
+    return normalizeMachineId(String(value).match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1]);
   }
   return '';
 }
@@ -64,15 +86,10 @@ async function getMachineId(context) {
   if (cached) {
     return cached;
   }
-  const raw = await readMotherboardId();
-  const serial =
-    process.platform === 'darwin'
-      ? normalizeMachineId(String(raw).match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1])
-      : normalizeMachineId(raw);
-  if (serial) {
-    await context.globalState.update(MACHINE_ID_STATE_KEY, serial);
-  }
-  return serial;
+  const machineId =
+    (await readStableMachineId()) || randomUUID().replace(/-/g, '').slice(0, 24).toUpperCase();
+  await context.globalState.update(MACHINE_ID_STATE_KEY, machineId);
+  return machineId;
 }
 
 async function startExtensionAnalytics(context) {
@@ -81,12 +98,7 @@ async function startExtensionAnalytics(context) {
     if (!machineId) {
       return;
     }
-    const configuredBase = String(
-      vscode.workspace.getConfiguration('xiaoxiaoshuo').get('apiBaseUrl') || ''
-    ).trim();
-    const apiBase = (configuredBase || 'https://xiaoxiaoshuo.top').replace(/\/+$/, '');
-
-    await fetch(`${apiBase}/api/extension/events`, {
+    await fetch(ANALYTICS_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

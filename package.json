@@ -36,16 +36,6 @@
   ],
   "main": "./src/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "小小小说",
-      "properties": {
-        "xiaoxiaoshuo.apiBaseUrl": {
-          "type": "string",
-          "default": "https://xiaoxiaoshuo.top",
-          "description": "用户识别和打点使用的服务端地址。"
-        }
-      }
-    },
     "viewsContainers": {
       "activitybar": [
         {
