@@ -6,6 +6,7 @@ const vscode = require('vscode');
 
 const execFileAsync = promisify(execFile);
 const MACHINE_ID_STATE_KEY = 'xiaoxiaoshuo.pluginMachineId';
+const ANALYTICS_DELAY_MS = 3000;
 const INVALID_SERIALS = new Set([
   'DEFAULT STRING',
   'NONE',
@@ -75,16 +76,16 @@ async function getMachineId(context) {
 }
 
 async function startExtensionAnalytics(context) {
-  const machineId = await getMachineId(context);
-  if (!machineId) {
-    return;
-  }
-  const configuredBase = String(
-    vscode.workspace.getConfiguration('xiaoxiaoshuo').get('apiBaseUrl') || ''
-  ).trim();
-  const apiBase = (configuredBase || 'https://xiaoxiaoshuo.top').replace(/\/+$/, '');
-
   try {
+    const machineId = await getMachineId(context);
+    if (!machineId) {
+      return;
+    }
+    const configuredBase = String(
+      vscode.workspace.getConfiguration('xiaoxiaoshuo').get('apiBaseUrl') || ''
+    ).trim();
+    const apiBase = (configuredBase || 'https://xiaoxiaoshuo.top').replace(/\/+$/, '');
+
     await fetch(`${apiBase}/api/extension/events`, {
       method: 'POST',
       headers: {
@@ -103,10 +104,17 @@ async function startExtensionAnalytics(context) {
       })
     });
   } catch {
-    // 插件启动不能被打点网络异常阻断。
+    // 打点必须完全无感，任何异常都不能影响插件功能。
   }
 }
 
+function scheduleExtensionAnalytics(context) {
+  const timer = setTimeout(() => {
+    void startExtensionAnalytics(context);
+  }, ANALYTICS_DELAY_MS);
+  timer.unref?.();
+}
+
 module.exports = {
-  startExtensionAnalytics
+  scheduleExtensionAnalytics
 };
