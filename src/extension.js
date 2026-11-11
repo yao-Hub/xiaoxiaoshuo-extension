@@ -6,7 +6,11 @@ let sidebarProvider;
 
 function activate(context) {
   scheduleExtensionAnalytics(context);
-  sidebarProvider = new NovelReaderSidebarProvider(context.extensionUri, context.globalState);
+  sidebarProvider = new NovelReaderSidebarProvider(
+    context.extensionUri,
+    context.globalState,
+    context
+  );
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(VIEW_ID, sidebarProvider, {
@@ -21,6 +25,7 @@ function activate(context) {
 }
 
 function deactivate() {
+  sidebarProvider?.dispose();
   sidebarProvider = undefined;
 }
 

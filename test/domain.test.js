@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { buildSearchMetadata, getReaderBookTitle } = require('../src/analytics');
 const { getSearchTitleScore, normalizeSearchText, searchBooks } = require('../src/search/service');
 const { renderHomeHtml, renderPageHtml } = require('../src/ui/renderer');
 const { SEARCH_SOURCES } = require('../src/search/registry');
@@ -37,6 +38,34 @@ test('search ranking prefers exact matches over partial matches', () => {
   const unrelated = getSearchTitleScore('盘龙', query);
   assert.ok(exact > contained);
   assert.ok(contained > unrelated);
+});
+
+test('search analytics includes queries, modes and source outcomes', () => {
+  const metadata = buildSearchMetadata({
+    query: '辰东',
+    items: [
+      { text: '圣墟', mode: 'app' },
+      { text: '完美世界', mode: 'app' },
+      { text: '神墓', mode: 'web' }
+    ],
+    groups: [
+      { source: 'qimao', label: '七猫', items: [{}, {}], error: '' },
+      { source: 'qidian', label: '起点', items: [], error: '请求超时' }
+    ]
+  });
+
+  assert.equal(metadata.query, '辰东');
+  assert.equal(metadata.resultCount, 3);
+  assert.deepEqual(metadata.searchModes, { app: 2, web: 1 });
+  assert.equal(metadata.failedSourceCount, 1);
+  assert.equal(metadata.sourceResults[0].freeResultCount, 2);
+  assert.equal(metadata.sourceResults[1].error, '请求超时');
+});
+
+test('reader analytics resolves book title from chapter title formats', () => {
+  assert.equal(getReaderBookTitle({ bookTitle: '完美世界' }), '完美世界');
+  assert.equal(getReaderBookTitle({ title: '第一章 | 辰东《完美世界》' }), '完美世界');
+  assert.equal(getReaderBookTitle({ title: '提要 | 东皋录' }), '东皋录');
 });
 
 test('search publishes completed source results before every source finishes', async () => {

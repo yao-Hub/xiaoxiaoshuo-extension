@@ -7,6 +7,8 @@ const execFileAsync = promisify(execFile);
 const ANALYTICS_URL = 'https://xiaoxiaoshuo.top/api/extension/events';
 const MACHINE_ID_STATE_KEY = 'xiaoxiaoshuo.pluginMachineId';
 const ANALYTICS_DELAY_MS = 3000;
+const analyticsSessionId = randomUUID();
+let analyticsMachineId = '';
 const INVALID_SERIALS = new Set([
   '00000000-0000-0000-0000-000000000000',
   'DEFAULT STRING',
@@ -82,17 +84,22 @@ async function readStableMachineId() {
 }
 
 async function getMachineId(context) {
+  if (analyticsMachineId) {
+    return analyticsMachineId;
+  }
   const cached = normalizeMachineId(context.globalState.get(MACHINE_ID_STATE_KEY));
   if (cached) {
+    analyticsMachineId = cached;
     return cached;
   }
   const machineId =
     (await readStableMachineId()) || randomUUID().replace(/-/g, '').slice(0, 24).toUpperCase();
   await context.globalState.update(MACHINE_ID_STATE_KEY, machineId);
+  analyticsMachineId = machineId;
   return machineId;
 }
 
-async function startExtensionAnalytics(context) {
+async function sendAnalyticsEvent(context, event) {
   try {
     const machineId = await getMachineId(context);
     if (!machineId) {
@@ -107,17 +114,112 @@ async function startExtensionAnalytics(context) {
       signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
         machineId,
-        eventType: 'app_session',
-        sessionId: randomUUID(),
-        page: 'plugin',
-        metadata: {
-          extensionVersion: context.extension.packageJSON.version
-        }
+        sessionId: analyticsSessionId,
+        ...event
       })
     });
   } catch {
     // 打点必须完全无感，任何异常都不能影响插件功能。
   }
+}
+
+function buildSearchMetadata(page) {
+  const items = Array.isArray(page?.items) ? page.items : [];
+  const groups = Array.isArray(page?.groups) ? page.groups : [];
+  const modeCounts = items.reduce(
+    (counts, item) => {
+      if (item.mode === 'app') counts.app += 1;
+      if (item.mode === 'web') counts.web += 1;
+      return counts;
+    },
+    { app: 0, web: 0 }
+  );
+  const searchMode = modeCounts.app >= modeCounts.web ? 'app' : 'web';
+
+  return {
+    query: String(page?.query || '')
+      .trim()
+      .slice(0, 100),
+    resultCount: items.length,
+    freeResultCount: items.length,
+    hasFreeFullBook: items.length > 0,
+    searchMode,
+    searchModes: modeCounts,
+    failedSourceCount: groups.filter((group) => group.error).length,
+    sourceResults: groups.map((group) => ({
+      source: group.source,
+      label: group.label,
+      freeResultCount: Array.isArray(group.items) ? group.items.length : 0,
+      filteredResultCount: 0,
+      error: group.error || ''
+    }))
+  };
+}
+
+function getReaderBookTitle(page) {
+  const explicit = String(page?.bookTitle || '').trim();
+  if (explicit) {
+    return explicit;
+  }
+  const title = String(page?.title || '').trim();
+  const quoted = title.match(/《([^》]+)》/);
+  if (quoted) {
+    return quoted[1].trim();
+  }
+  const separated = title.split(/\s+\|\s+/);
+  return (separated.length > 1 ? separated.at(-1) : title).trim();
+}
+
+function trackSearch(context, page, error) {
+  const metadata = buildSearchMetadata(page);
+  if (error) {
+    metadata.error = String(error instanceof Error ? error.message : error).slice(0, 200);
+  }
+  void sendAnalyticsEvent(context, {
+    eventType: 'search',
+    page: 'search',
+    metadata
+  });
+}
+
+function trackReaderOpen(context, page, eventType = 'reader_open') {
+  void sendAnalyticsEvent(context, {
+    eventType,
+    page: 'reader',
+    bookTitle: getReaderBookTitle(page),
+    chapterUrl: String(page?.url || ''),
+    metadata: {
+      source: page?.source || '',
+      chapterTitle: String(page?.title || '')
+    }
+  });
+}
+
+function trackReaderSession(context, page, durationMs) {
+  if (durationMs < 1000) {
+    return;
+  }
+  void sendAnalyticsEvent(context, {
+    eventType: 'reader_session',
+    page: 'reader',
+    bookTitle: getReaderBookTitle(page),
+    chapterUrl: String(page?.url || ''),
+    durationMs: Math.max(0, Math.round(durationMs)),
+    metadata: {
+      source: page?.source || '',
+      chapterTitle: String(page?.title || '')
+    }
+  });
+}
+
+async function startExtensionAnalytics(context) {
+  await sendAnalyticsEvent(context, {
+    eventType: 'app_session',
+    page: 'plugin',
+    metadata: {
+      extensionVersion: context.extension.packageJSON.version
+    }
+  });
 }
 
 function scheduleExtensionAnalytics(context) {
@@ -128,5 +230,10 @@ function scheduleExtensionAnalytics(context) {
 }
 
 module.exports = {
-  scheduleExtensionAnalytics
+  buildSearchMetadata,
+  getReaderBookTitle,
+  scheduleExtensionAnalytics,
+  trackReaderOpen,
+  trackReaderSession,
+  trackSearch
 };

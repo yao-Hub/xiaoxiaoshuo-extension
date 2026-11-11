@@ -1,4 +1,5 @@
 const vscode = require('vscode');
+const { trackReaderOpen, trackReaderSession, trackSearch } = require('../analytics');
 const { isLikelyUrl, normalizeUrl } = require('../core/url');
 const { searchBooks } = require('../search/service');
 const { BookshelfStore } = require('./stores/bookshelf-store');
@@ -21,9 +22,10 @@ const VIEW_CONTAINER_ID = 'xiaoxiaoshuoSidebar';
 const VIEW_ID = 'xiaoxiaoshuo.readerView';
 
 class NovelReaderSidebarProvider {
-  constructor(extensionUri, storage) {
+  constructor(extensionUri, storage, analyticsContext) {
     this.extensionUri = extensionUri;
     this.storage = storage;
+    this.analyticsContext = analyticsContext;
     this.bookshelfStore = new BookshelfStore(storage);
     this.historyStore = new HistoryStore(storage);
     this.pageCache = new PageCache();
@@ -35,6 +37,11 @@ class NovelReaderSidebarProvider {
     this.currentMode = 'url';
     this.currentQuery = '';
     this.searchInputQuery = '';
+    this.chapterPageKey = '';
+    this.readerSession = undefined;
+    this.readerSessionTimer = undefined;
+    this.visibilityDisposable = undefined;
+    this.viewDisposable = undefined;
     this.view = undefined;
   }
 
@@ -75,6 +82,8 @@ class NovelReaderSidebarProvider {
   }
 
   resolveWebviewView(webviewView) {
+    this.visibilityDisposable?.dispose();
+    this.viewDisposable?.dispose();
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true
@@ -86,6 +95,20 @@ class NovelReaderSidebarProvider {
       this.history,
       this.searchHistory
     );
+
+    this.visibilityDisposable = webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.resumeReaderSession();
+      } else {
+        this.finishReaderSession();
+      }
+    });
+    this.viewDisposable = webviewView.onDidDispose(() => {
+      this.finishReaderSession();
+      this.view = undefined;
+      this.visibilityDisposable = undefined;
+      this.viewDisposable = undefined;
+    });
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (!message || typeof message.command !== 'string') {
@@ -262,6 +285,7 @@ class NovelReaderSidebarProvider {
       throw new Error(normalized.message);
     }
 
+    this.finishReaderSession();
     this.pushCurrentPage();
     this.currentUrl = normalized.url;
     this.currentMode = 'url';
@@ -279,6 +303,7 @@ class NovelReaderSidebarProvider {
     if (!this.view) {
       return;
     }
+    this.finishReaderSession();
     if (pushCurrent) {
       this.pushCurrentPage();
     }
@@ -307,6 +332,7 @@ class NovelReaderSidebarProvider {
     if (!value) {
       return;
     }
+    this.finishReaderSession();
     if (pushCurrent) {
       this.pushCurrentPage();
     }
@@ -330,6 +356,7 @@ class NovelReaderSidebarProvider {
     );
     const reportProgress = this.createProgressReporter(sequence);
     let hasStreamedResults = false;
+    let hasTrackedSearch = false;
 
     try {
       const page = await searchBooks(value, {
@@ -343,6 +370,10 @@ class NovelReaderSidebarProvider {
           if (!partialPage.items.length) {
             return;
           }
+          if (!hasTrackedSearch) {
+            trackSearch(this.analyticsContext, partialPage);
+            hasTrackedSearch = true;
+          }
           hasStreamedResults = true;
           this.view.webview.postMessage({
             command: 'searchResults',
@@ -354,6 +385,10 @@ class NovelReaderSidebarProvider {
       reportProgress({ fraction: 0.99, label: '正在生成搜索结果' });
       if (sequence !== this.loadSequence || !this.view) {
         return;
+      }
+      if (!hasTrackedSearch) {
+        trackSearch(this.analyticsContext, page);
+        hasTrackedSearch = true;
       }
       this.currentPage = page;
       if (hasStreamedResults) {
@@ -373,6 +408,9 @@ class NovelReaderSidebarProvider {
     } catch (error) {
       if (sequence !== this.loadSequence || !this.view) {
         return;
+      }
+      if (!hasTrackedSearch) {
+        trackSearch(this.analyticsContext, { query: value, items: [], groups: [] }, error);
       }
       this.view.webview.html = renderSearchErrorHtml(
         this.view.webview,
@@ -394,6 +432,7 @@ class NovelReaderSidebarProvider {
       return;
     }
 
+    this.finishReaderSession();
     this.abortActiveRequest();
     this.pushForwardPage(this.currentPage || { kind: 'home' });
     const sequence = ++this.loadSequence;
@@ -407,6 +446,7 @@ class NovelReaderSidebarProvider {
       return;
     }
 
+    this.finishReaderSession();
     this.abortActiveRequest();
     this.pushNavigationPage(this.currentPage || { kind: 'home' }, false);
     const sequence = ++this.loadSequence;
@@ -414,6 +454,7 @@ class NovelReaderSidebarProvider {
   }
 
   async restoreNavigationPage(page, sequence) {
+    this.finishReaderSession();
     if (page.kind === 'home') {
       this.currentPage = undefined;
       this.currentMode = 'url';
@@ -461,6 +502,7 @@ class NovelReaderSidebarProvider {
       this.history,
       this.searchHistory
     );
+    this.trackRenderedReaderPage(page);
   }
 
   async showHistory(pushCurrent = true) {
@@ -468,6 +510,7 @@ class NovelReaderSidebarProvider {
       return;
     }
 
+    this.finishReaderSession();
     this.abortActiveRequest();
     if (pushCurrent) {
       this.pushCurrentPage();
@@ -496,6 +539,7 @@ class NovelReaderSidebarProvider {
       return;
     }
 
+    this.finishReaderSession();
     this.abortActiveRequest();
     if (pushCurrent) {
       this.pushCurrentPage();
@@ -558,6 +602,7 @@ class NovelReaderSidebarProvider {
     if (!this.view) {
       return;
     }
+    this.finishReaderSession();
 
     if (this.currentMode === 'bookshelf') {
       await this.showBookshelf(false);
@@ -596,6 +641,7 @@ class NovelReaderSidebarProvider {
       return;
     }
 
+    this.finishReaderSession();
     const sequence = ++this.loadSequence;
     const requestController = this.beginRequest();
 
@@ -679,6 +725,7 @@ class NovelReaderSidebarProvider {
       this.history,
       this.searchHistory
     );
+    this.trackRenderedReaderPage(page);
     this.prefetchNextPage(page.nextUrl);
   }
 
@@ -761,6 +808,70 @@ class NovelReaderSidebarProvider {
         }
       : state;
   }
+
+  trackRenderedReaderPage(page) {
+    if (!page || page.kind !== 'chapter') {
+      return;
+    }
+
+    const pageKey = String(page.url || '');
+    const eventType =
+      this.chapterPageKey && pageKey && this.chapterPageKey !== pageKey
+        ? 'chapter_change'
+        : 'reader_open';
+    this.chapterPageKey = pageKey;
+    trackReaderOpen(this.analyticsContext, page, eventType);
+    this.startReaderSession(page);
+  }
+
+  startReaderSession(page) {
+    this.finishReaderSession();
+    if (!String(page?.content || '').trim()) {
+      return;
+    }
+
+    this.readerSession = {
+      page,
+      startedAt: Date.now()
+    };
+    this.readerSessionTimer = setInterval(() => {
+      this.finishReaderSession({ restart: true });
+    }, 60 * 1000);
+    this.readerSessionTimer.unref?.();
+  }
+
+  resumeReaderSession() {
+    if (this.readerSession || !this.view?.visible) {
+      return;
+    }
+    if (this.currentPage?.kind === 'chapter') {
+      this.startReaderSession(this.currentPage);
+    }
+  }
+
+  finishReaderSession({ restart = false } = {}) {
+    const session = this.readerSession;
+    this.readerSession = undefined;
+    clearInterval(this.readerSessionTimer);
+    this.readerSessionTimer = undefined;
+
+    if (session) {
+      trackReaderSession(this.analyticsContext, session.page, Date.now() - session.startedAt);
+    }
+    if (restart) {
+      this.resumeReaderSession();
+    }
+  }
+
+  dispose() {
+    this.finishReaderSession();
+    this.visibilityDisposable?.dispose();
+    this.viewDisposable?.dispose();
+    this.visibilityDisposable = undefined;
+    this.viewDisposable = undefined;
+    this.view = undefined;
+  }
+
   async rememberPage(page, fallbackUrl) {
     await this.historyStore.rememberPage(page, fallbackUrl);
   }
