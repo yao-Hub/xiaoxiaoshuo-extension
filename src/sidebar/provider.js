@@ -1,5 +1,5 @@
 const vscode = require('vscode');
-const { trackReaderOpen, trackReaderSession, trackSearch } = require('../analytics');
+const { trackBookOpen, trackReaderOpen, trackReaderSession, trackSearch } = require('../analytics');
 const { isLikelyUrl, normalizeUrl } = require('../core/url');
 const { searchBooks } = require('../search/service');
 const { BookshelfStore } = require('./stores/bookshelf-store');
@@ -201,6 +201,7 @@ class NovelReaderSidebarProvider {
       }
 
       if (message.command === 'openItem') {
+        this.trackOpenClick(message);
         const normalized = normalizeUrl(message.url);
         if (!normalized.ok) {
           this.showToast(normalized.message);
@@ -339,6 +340,7 @@ class NovelReaderSidebarProvider {
     this.currentMode = 'title';
     this.currentQuery = value;
     this.searchInputQuery = value;
+    trackSearch(this.analyticsContext, { query: value, items: [], groups: [] });
     const sequence = ++this.loadSequence;
     const requestController = this.beginRequest();
     await this.rememberSearch(value);
@@ -356,7 +358,6 @@ class NovelReaderSidebarProvider {
     );
     const reportProgress = this.createProgressReporter(sequence);
     let hasStreamedResults = false;
-    let hasTrackedSearch = false;
 
     try {
       const page = await searchBooks(value, {
@@ -370,10 +371,6 @@ class NovelReaderSidebarProvider {
           if (!partialPage.items.length) {
             return;
           }
-          if (!hasTrackedSearch) {
-            trackSearch(this.analyticsContext, partialPage);
-            hasTrackedSearch = true;
-          }
           hasStreamedResults = true;
           this.view.webview.postMessage({
             command: 'searchResults',
@@ -385,10 +382,6 @@ class NovelReaderSidebarProvider {
       reportProgress({ fraction: 0.99, label: '正在生成搜索结果' });
       if (sequence !== this.loadSequence || !this.view) {
         return;
-      }
-      if (!hasTrackedSearch) {
-        trackSearch(this.analyticsContext, page);
-        hasTrackedSearch = true;
       }
       this.currentPage = page;
       if (hasStreamedResults) {
@@ -408,9 +401,6 @@ class NovelReaderSidebarProvider {
     } catch (error) {
       if (sequence !== this.loadSequence || !this.view) {
         return;
-      }
-      if (!hasTrackedSearch) {
-        trackSearch(this.analyticsContext, { query: value, items: [], groups: [] }, error);
       }
       this.view.webview.html = renderSearchErrorHtml(
         this.view.webview,
@@ -807,6 +797,19 @@ class NovelReaderSidebarProvider {
           isInBookshelf: this.bookshelfStore.hasPage(page)
         }
       : state;
+  }
+
+  trackOpenClick(message) {
+    const page = this.currentPage;
+    const bookTitle =
+      String(message.title || '').trim() ||
+      String(page?.bookTitle || (page?.kind === 'list' ? page.title : page?.title) || '').trim();
+    trackBookOpen(this.analyticsContext, {
+      bookTitle,
+      url: message.url,
+      action: message.openKind,
+      source: page?.source
+    });
   }
 
   trackRenderedReaderPage(page) {

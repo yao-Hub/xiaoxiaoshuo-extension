@@ -215,7 +215,12 @@ const CLIENT_SCRIPT = String.raw`
           url,
           readingUrl: target.getAttribute('data-reading-url') || '',
           title: target.getAttribute('data-item-title') || '',
-          catalogMissing: target.hasAttribute('data-catalog-missing')
+          catalogMissing: target.hasAttribute('data-catalog-missing'),
+          openKind:
+            target.classList.contains('search-link') ||
+            target.classList.contains('nav-directory')
+              ? 'catalog'
+              : 'chapter'
         });
       }
     });

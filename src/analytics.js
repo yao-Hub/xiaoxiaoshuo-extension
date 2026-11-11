@@ -190,7 +190,21 @@ function trackReaderOpen(context, page, eventType = 'reader_open') {
     chapterUrl: String(page?.url || ''),
     metadata: {
       source: page?.source || '',
-      chapterTitle: String(page?.title || '')
+      chapterTitle: String(page?.title || ''),
+      catalogUrl: String(page?.catalogUrl || '')
+    }
+  });
+}
+
+function trackBookOpen(context, input) {
+  void sendAnalyticsEvent(context, {
+    eventType: 'book_open',
+    page: 'catalog',
+    bookTitle: String(input.bookTitle || input.title || '').slice(0, 200),
+    chapterUrl: String(input.url || ''),
+    metadata: {
+      action: String(input.action || 'open'),
+      source: String(input.source || '')
     }
   });
 }
@@ -207,7 +221,8 @@ function trackReaderSession(context, page, durationMs) {
     durationMs: Math.max(0, Math.round(durationMs)),
     metadata: {
       source: page?.source || '',
-      chapterTitle: String(page?.title || '')
+      chapterTitle: String(page?.title || ''),
+      catalogUrl: String(page?.catalogUrl || '')
     }
   });
 }
@@ -233,6 +248,7 @@ module.exports = {
   buildSearchMetadata,
   getReaderBookTitle,
   scheduleExtensionAnalytics,
+  trackBookOpen,
   trackReaderOpen,
   trackReaderSession,
   trackSearch
