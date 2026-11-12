@@ -302,15 +302,6 @@ const WEBVIEW_STYLES = String.raw`
       color: var(--muted);
     }
 
-    .search-alert {
-      margin: -10px 0 22px;
-      padding: 0;
-      color: var(--vscode-inputValidation-warningForeground);
-      background: none;
-      border: 0;
-      line-height: 1.5;
-    }
-
     .search-results-flat {
       margin-top: 22px;
       border: 1px solid var(--border);

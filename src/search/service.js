@@ -8,17 +8,50 @@ async function searchBooks(input, options = {}) {
   }
 
   options.onProgress?.({ fraction: 0.1, label: '正在连接服务器' });
+  const streamedGroups = [];
+  const streamedBooks = [];
   const response = await options.serverApi.search(query, {
     page: 1,
     pageSize: 50,
-    signal: options.signal
+    signal: options.signal,
+    onGroup: (event) => {
+      streamedGroups.push(event.group);
+      streamedBooks.push(...(event.items || []), ...(event.filteredItems || []));
+      const items = mapServerBooks(streamedBooks, query);
+      const totalGroups = Math.max(streamedGroups.length, Number(event.total) || 0);
+      options.onPartialResults?.(
+        createSearchPage(
+          query,
+          buildSearchGroups(streamedGroups, items),
+          items,
+          totalGroups - streamedGroups.length
+        )
+      );
+    }
   });
   throwIfAborted(options.signal);
 
   const allBooks = [...(response.items || []), ...(response.filteredItems || [])];
+  const items = mapServerBooks(allBooks, query);
+
+  const page = createSearchPage(query, buildSearchGroups(response.groups, items), items);
+  options.onPartialResults?.(page);
+  options.onProgress?.({ fraction: 0.95, label: '搜索结果已返回' });
+  return page;
+}
+
+function throwIfAborted(signal) {
+  if (signal && signal.aborted) {
+    const error = new Error('请求已取消。');
+    error.name = 'AbortError';
+    throw error;
+  }
+}
+
+function mapServerBooks(books, query) {
   const seen = new Set();
-  const items = sortSearchItems(
-    allBooks
+  return sortSearchItems(
+    books
       .filter((book) => {
         const key = `${book.source}:${book.catalogUrl || book.readUrl}`;
         if (!book.title || !key || seen.has(key)) {
@@ -41,29 +74,16 @@ async function searchBooks(input, options = {}) {
       })),
     query
   );
-
-  const page = createSearchPage(query, buildSearchGroups(response.groups, items), items);
-  options.onPartialResults?.(page);
-  options.onProgress?.({ fraction: 0.95, label: '搜索结果已返回' });
-  return page;
 }
 
-function throwIfAborted(signal) {
-  if (signal && signal.aborted) {
-    const error = new Error('请求已取消。');
-    error.name = 'AbortError';
-    throw error;
-  }
-}
-
-function createSearchPage(query, groups, items) {
+function createSearchPage(query, groups, items, pendingCount = 0) {
   return {
     kind: 'search',
     source: 'search',
     url: '',
     query,
     title: `搜索：${query}`,
-    pendingCount: 0,
+    pendingCount,
     groups,
     items
   };

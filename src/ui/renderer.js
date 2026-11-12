@@ -361,7 +361,6 @@ function renderSearchSuggestions(searchHistory) {
 
 function renderSearchBody(page) {
   const groups = Array.isArray(page.groups) ? page.groups : [];
-  const failedCount = groups.filter((group) => group.error).length;
   const pendingCount = Math.max(0, Number(page.pendingCount) || 0);
   const items = Array.isArray(page.items)
     ? page.items
@@ -379,16 +378,14 @@ function renderSearchBody(page) {
       </div>`;
     })
     .join('');
-  const failureSummary = failedCount ? `，${failedCount} 个网站搜索失败` : '';
   const summary = pendingCount
-    ? `已找到 ${items.length} 个结果${failureSummary}，正在继续搜索…`
-    : `共找到 ${items.length} 个结果${failureSummary}。`;
+    ? `共找到 ${items.length} 个结果，正在继续搜索…`
+    : `共找到 ${items.length} 个结果。`;
 
   return `
     <section class="search-view">
       <h1>“${escapeHtml(page.query || '')}” 的搜索结果</h1>
       <p class="search-summary">${summary}</p>
-      ${failedCount ? '<div class="search-alert">部分来源搜索失败，请稍后重试。</div>' : ''}
       <div class="search-results-flat">
         ${rows || '<div class="search-empty">没有找到相关作品</div>'}
       </div>

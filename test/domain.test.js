@@ -99,6 +99,70 @@ test('search uses server results and maps books into openable items', async () =
   assert.equal(updates.length, 1);
 });
 
+test('search exposes completed source groups before the final response', async () => {
+  const updates = [];
+  let responseCompleted = false;
+  const page = await searchBooks('完美世界', {
+    serverApi: {
+      async search(query, options) {
+        options.onGroup({
+          total: 2,
+          group: {
+            source: 'qidian',
+            label: '起点中文网',
+            count: 1,
+            filteredCount: 0,
+            error: ''
+          },
+          items: [
+            {
+              title: '完美世界',
+              author: '辰东',
+              source: 'qidian',
+              sourceLabel: '起点中文网',
+              catalogUrl: 'https://example.com/book/1/',
+              readUrl: 'https://example.com/chapter/1'
+            }
+          ],
+          filteredItems: []
+        });
+        assert.equal(responseCompleted, false);
+        responseCompleted = true;
+        return {
+          items: [
+            {
+              title: '完美世界',
+              author: '辰东',
+              source: 'qidian',
+              sourceLabel: '起点中文网',
+              catalogUrl: 'https://example.com/book/1/',
+              readUrl: 'https://example.com/chapter/1'
+            }
+          ],
+          filteredItems: [],
+          groups: [
+            {
+              source: 'qidian',
+              label: '起点中文网',
+              count: 1,
+              filteredCount: 0,
+              error: ''
+            }
+          ]
+        };
+      }
+    },
+    onPartialResults(value) {
+      updates.push(value);
+    }
+  });
+
+  assert.equal(updates[0].items[0].text, '完美世界');
+  assert.equal(updates[0].pendingCount, 1);
+  assert.equal(updates.at(-1).pendingCount, 0);
+  assert.equal(page.items.length, 1);
+});
+
 test('search surfaces server errors without a network-tool hint', async () => {
   await assert.rejects(
     searchBooks('完美世界', {
@@ -175,6 +239,101 @@ test('server requests include the extension version header', async () => {
   assert.equal(requests.length, 2);
   assert.equal(requests[0].headers['X-Extension-Version'], '0.1.6');
   assert.equal(requests[1].headers['X-Extension-Version'], '0.1.6');
+  assert.equal(requests[1].headers.accept, 'application/x-ndjson');
+});
+
+test('streaming search forwards source groups before its final result', async () => {
+  const originalFetch = global.fetch;
+  const encoder = new TextEncoder();
+  const events = [
+    {
+      type: 'group',
+      total: 2,
+      group: {
+        source: 'qidian',
+        label: '起点中文网',
+        count: 1,
+        filteredCount: 0,
+        error: ''
+      },
+      items: [{ title: '完美世界' }],
+      filteredItems: []
+    },
+    {
+      type: 'done',
+      data: {
+        query: '完美世界',
+        mode: 'all',
+        items: [{ title: '完美世界' }],
+        filteredItems: [],
+        groups: [],
+        page: 1,
+        pageSize: 50,
+        hasMore: false
+      }
+    }
+  ];
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/api/extension/session')) {
+      return new Response(JSON.stringify({ code: 0, msg: 'ok', data: { token: 'test-token' } }), {
+        status: 200
+      });
+    }
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(events.map((event) => `${JSON.stringify(event)}\n`).join(''))
+          );
+          controller.close();
+        }
+      }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson; charset=utf-8' }
+      }
+    );
+  };
+
+  try {
+    const api = createServerApi({
+      extension: { packageJSON: { version: '0.1.6' } },
+      globalState: {
+        get: () => 'TEST-MACHINE-ID',
+        update: async () => undefined
+      }
+    });
+    const groups = [];
+    const result = await api.search('完美世界', {
+      onGroup: (event) => groups.push(event)
+    });
+
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].group.source, 'qidian');
+    assert.equal(result.items[0].title, '完美世界');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('server timeouts surface an actionable message', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  };
+
+  try {
+    const api = createServerApi({
+      extension: { packageJSON: { version: '0.1.6' } },
+      globalState: {
+        get: () => 'TEST-MACHINE-ID',
+        update: async () => undefined
+      }
+    });
+    await assert.rejects(api.search('完美世界'), /请求超时，请稍后重试。/);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('webview renderer injects isolated styles and client state', () => {
@@ -286,32 +445,31 @@ test('bookshelf page lists saved books with a remove action', () => {
   assert.match(html, /data-remove-bookshelf="catalog:https:\/\/example\.com\/book\/1"/);
 });
 
-test('search results render incrementally with an inline yellow failure notice', () => {
-  const html = renderPageHtml(
-    {},
-    {
-      kind: 'search',
-      query: '完美世界',
-      pendingCount: 2,
-      items: [{ text: '完美世界', chaptersUrl: 'https://example.com/book/1/' }],
-      groups: [
-        {
-          source: 'example',
-          label: '示例站点',
-          items: [{ text: '完美世界', chaptersUrl: 'https://example.com/book/1/' }],
-          error: '示例站点搜索失败'
-        }
-      ]
-    }
-  );
+test('search results only show the current result count', () => {
+  const page = {
+    kind: 'search',
+    query: '完美世界',
+    pendingCount: 2,
+    items: [{ text: '完美世界', chaptersUrl: 'https://example.com/book/1/' }],
+    groups: [
+      {
+        source: 'example',
+        label: '示例站点',
+        items: [{ text: '完美世界', chaptersUrl: 'https://example.com/book/1/' }],
+        error: '示例站点搜索失败'
+      }
+    ]
+  };
+  const html = renderPageHtml({}, page);
 
-  assert.match(html, /已找到 1 个结果，1 个网站搜索失败，正在继续搜索…/);
-  assert.match(html, /class="search-alert"/);
-  assert.match(html, /部分来源搜索失败，请稍后重试。/);
-  assert.match(
-    html,
-    /\.search-alert\s*\{[^}]*color: var\(--vscode-inputValidation-warningForeground\)[^}]*background: none/s
-  );
+  assert.match(html, /共找到 1 个结果，正在继续搜索…/);
+  assert.doesNotMatch(html, /网站搜索失败|部分来源搜索失败|class="search-alert"/);
+  assert.doesNotMatch(html, /\.search-alert\s*\{/);
+
+  page.pendingCount = 0;
+  const completedHtml = renderPageHtml({}, page);
+  assert.match(completedHtml, /共找到 1 个结果。/);
+  assert.doesNotMatch(completedHtml, /网站搜索失败|部分来源搜索失败|class="search-alert"/);
 });
 
 test('history store deduplicates and persists history', async () => {

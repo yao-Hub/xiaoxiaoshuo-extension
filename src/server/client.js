@@ -1,7 +1,8 @@
 const { getMachineId } = require('../analytics');
 
 const SERVER_BASE_URL = 'https://xiaoxiaoshuo.top';
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 45000;
+const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试。';
 
 function createServerApi(context) {
   const extensionVersion = String(context?.extension?.packageJSON?.version || '');
@@ -19,15 +20,14 @@ function createServerApi(context) {
     token = '';
     tokenPromise = (async () => {
       const machineId = await getMachineId(context);
-      const response = await fetch(`${SERVER_BASE_URL}/api/extension/session`, {
+      const response = await fetchWithTimeout(`${SERVER_BASE_URL}/api/extension/session`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'X-Platform': 'extension',
           'X-Extension-Version': extensionVersion
         },
-        body: JSON.stringify({ machineId }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        body: JSON.stringify({ machineId })
       });
       const body = await parseResponse(response);
       if (!body.token) {
@@ -44,7 +44,7 @@ function createServerApi(context) {
     }
   }
 
-  async function request(path, query = {}, options = {}, retried = false) {
+  async function request(path, query = {}, options = {}, retried = false, parse = parseResponse) {
     const url = new URL(path, SERVER_BASE_URL);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -53,20 +53,21 @@ function createServerApi(context) {
     }
 
     const authToken = await requestToken(retried);
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: {
         Authorization: `Bearer ${authToken}`,
         'X-Platform': 'extension',
-        'X-Extension-Version': extensionVersion
+        'X-Extension-Version': extensionVersion,
+        ...(options.headers || {})
       },
-      signal: combineSignals(options.signal, REQUEST_TIMEOUT_MS)
+      signal: options.signal
     });
 
     if (response.status === 401 && !retried) {
-      return request(path, query, options, true);
+      return request(path, query, options, true, parse);
     }
 
-    return parseResponse(response);
+    return parse(response);
   }
 
   async function search(query, options = {}) {
@@ -77,7 +78,14 @@ function createServerApi(context) {
         page: options.page || 1,
         pageSize: options.pageSize || 50
       },
-      options
+      {
+        ...options,
+        headers: {
+          accept: 'application/x-ndjson'
+        }
+      },
+      false,
+      (response) => parseSearchResponse(response, options)
     );
   }
 
@@ -128,6 +136,92 @@ function mapResolvedPage(page, fallbackUrl) {
   };
 }
 
+async function parseSearchResponse(response, options) {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/x-ndjson')) {
+    return parseSearchStream(response, options);
+  }
+  return parseResponse(response);
+}
+
+async function parseSearchStream(response, options) {
+  if (!response.ok) {
+    return parseResponse(response);
+  }
+  if (!response.body) {
+    throw new Error('搜索连接已断开，请稍后重试。');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result;
+
+  const handleLine = (line) => {
+    if (!line) {
+      return;
+    }
+
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      throw new Error('搜索数据格式错误，请稍后重试。');
+    }
+
+    if (event.type === 'group') {
+      options.onGroup?.(event);
+      return;
+    }
+    if (event.type === 'done') {
+      result = event.data;
+      return;
+    }
+    if (event.type === 'error') {
+      throw new Error(event.message || '搜索失败，请稍后重试。');
+    }
+  };
+
+  const consumeLines = (flush = false) => {
+    let lineEnd = buffer.indexOf('\n');
+    while (lineEnd >= 0) {
+      handleLine(buffer.slice(0, lineEnd).trim());
+      buffer = buffer.slice(lineEnd + 1);
+      lineEnd = buffer.indexOf('\n');
+    }
+    if (flush && buffer.trim()) {
+      handleLine(buffer.trim());
+      buffer = '';
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      consumeLines();
+    }
+    buffer += decoder.decode();
+    consumeLines(true);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    if (error && typeof error === 'object' && error.name === 'TimeoutError') {
+      throw new Error(REQUEST_TIMEOUT_MESSAGE, { cause: error });
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!result) {
+    throw new Error('搜索连接提前结束，请稍后重试。');
+  }
+  return result;
+}
+
 async function parseResponse(response) {
   const text = await response.text();
   let body;
@@ -157,6 +251,20 @@ function combineSignals(externalSignal, timeoutMs) {
   return typeof AbortSignal.any === 'function'
     ? AbortSignal.any([externalSignal, timeoutSignal])
     : externalSignal;
+}
+
+async function fetchWithTimeout(input, options = {}) {
+  try {
+    return await fetch(input, {
+      ...options,
+      signal: combineSignals(options.signal, REQUEST_TIMEOUT_MS)
+    });
+  } catch (error) {
+    if (error && typeof error === 'object' && error.name === 'TimeoutError') {
+      throw new Error(REQUEST_TIMEOUT_MESSAGE, { cause: error });
+    }
+    throw error;
+  }
 }
 
 module.exports = {
