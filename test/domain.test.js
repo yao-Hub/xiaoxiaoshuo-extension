@@ -1,12 +1,17 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
-const { buildSearchMetadata, getReaderBookTitle } = require('../src/analytics');
+const { buildSearchMetadata, getReaderBookTitle, trackLocalUpload } = require('../src/analytics');
 const { getSearchTitleScore, normalizeSearchText, searchBooks } = require('../src/search/service');
 const { createServerApi, mapResolvedPage } = require('../src/server/client');
 const { renderHomeHtml, renderPageHtml } = require('../src/ui/renderer');
 const { BookshelfStore } = require('../src/sidebar/stores/bookshelf-store');
 const { HistoryStore } = require('../src/sidebar/stores/history-store');
+const { LocalNovelStore } = require('../src/sidebar/stores/local-novel-store');
 const { NavigationStore } = require('../src/sidebar/stores/navigation-store');
+const { decodeNovel, splitNovelText } = require('../src/local-novel/parser');
 const { isLikelyUrl, normalizeUrl, resolveUrl } = require('../src/core/url');
 
 test('URL normalization accepts HTTP(S) and rejects unsafe schemes', () => {
@@ -336,6 +341,46 @@ test('server timeouts surface an actionable message', async () => {
   }
 });
 
+test('local uploads send title, chapter count, size and filename analytics', async () => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url: String(url), body: JSON.parse(options.body) });
+    return new Response(JSON.stringify({ code: 0, msg: 'ok', data: {} }), { status: 200 });
+  };
+
+  try {
+    trackLocalUpload(
+      {
+        extension: { packageJSON: { version: '0.1.7' } },
+        globalState: {
+          get: () => 'TEST-MACHINE-ID',
+          update: async () => undefined
+        }
+      },
+      {
+        title: '本地书',
+        chapterCount: 12,
+        fileSize: 4096,
+        sourceFilename: '本地书.txt'
+      }
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://xiaoxiaoshuo.top/api/extension/events');
+  assert.equal(requests[0].body.eventType, 'local_upload');
+  assert.equal(requests[0].body.bookTitle, '本地书');
+  assert.deepEqual(requests[0].body.metadata, {
+    chapterCount: 12,
+    fileSize: 4096,
+    sourceFilename: '本地书.txt'
+  });
+});
+
 test('webview renderer injects isolated styles and client state', () => {
   const html = renderHomeHtml({}, '');
   assert.match(html, /<style>/);
@@ -441,8 +486,115 @@ test('bookshelf page lists saved books with a remove action', () => {
   );
 
   assert.match(html, /class="bookshelf-view"/);
+  assert.match(html, /data-upload-local-novel[^>]*>上传本地小说<\/button>/);
   assert.match(html, /完美世界/);
   assert.match(html, /data-remove-bookshelf="catalog:https:\/\/example\.com\/book\/1"/);
+});
+
+test('local novel text is split into readable chapters', () => {
+  const chapters = splitNovelText(
+    '作者的话\n\n第一章 初见\n\n第一段正文。\n\n第二段正文。\n\n第二章 再会\n\n第二章正文。',
+    '测试小说'
+  );
+
+  assert.equal(chapters.length, 2);
+  assert.equal(chapters[0].title, '第一章 初见');
+  assert.match(chapters[0].content, /作者的话/);
+  assert.match(chapters[0].content, /第一段正文/);
+  assert.equal(chapters[1].title, '第二章 再会');
+  assert.equal(chapters[1].content, '第二章正文。');
+});
+
+test('local novel text detects GB18030 encoded Chinese TXT files', () => {
+  const gb18030 = Buffer.from([
+    0xb5, 0xda, 0xd2, 0xbb, 0xd5, 0xc2, 0x20, 0xbf, 0xaa, 0xca, 0xbc, 0x0a, 0x0a, 0xd5, 0xfd, 0xce,
+    0xc4
+  ]);
+
+  assert.equal(decodeNovel(gb18030), '第一章 开始\n\n正文');
+});
+
+test('local novel store persists imported text and removes its data file', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiaoshuo-local-'));
+  const values = new Map();
+  const storage = {
+    get(key, fallback) {
+      return values.has(key) ? values.get(key) : fallback;
+    },
+    async update(key, value) {
+      values.set(key, value);
+    }
+  };
+
+  try {
+    const store = new LocalNovelStore(storage, { fsPath: rootDir });
+    const book = await store.importBuffer(
+      Buffer.from('第一章 开始\n\n正文。\n\n第二章 继续\n\n更多正文。', 'utf8'),
+      '本地测试.txt'
+    );
+
+    assert.equal(book.title, '本地测试');
+    assert.equal(book.chapterCount, 2);
+    assert.ok(book.fileSize > 0);
+    assert.equal(store.books.length, 1);
+    assert.equal((await store.getBook(book.id)).chapters[1].title, '第二章 继续');
+
+    const reloaded = new LocalNovelStore(storage, { fsPath: rootDir });
+    assert.equal(reloaded.books[0].title, '本地测试');
+    assert.equal((await reloaded.getBook(book.id)).chapters.length, 2);
+
+    await reloaded.remove(book.id);
+    assert.equal(reloaded.books.length, 0);
+    assert.deepEqual(await fs.readdir(path.join(rootDir, 'local-novels')), []);
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('bookshelf and local pages expose local novel actions', () => {
+  const html = renderPageHtml(
+    {},
+    {
+      kind: 'bookshelf',
+      items: [
+        {
+          key: 'local:abc123',
+          kind: 'local',
+          localId: 'abc123',
+          title: '本地书',
+          chapterCount: 12,
+          url: 'local:abc123'
+        }
+      ]
+    }
+  );
+  const catalogHtml = renderPageHtml(
+    {},
+    {
+      kind: 'local-list',
+      localBookId: 'abc123',
+      title: '本地书',
+      items: [{ index: 0, text: '第一章 开始' }]
+    }
+  );
+  const chapterHtml = renderPageHtml(
+    {},
+    {
+      kind: 'local-chapter',
+      localBookId: 'abc123',
+      localChapterIndex: 0,
+      title: '第一章 开始',
+      bookTitle: '本地书',
+      content: '本地正文。',
+      chapterCount: 1
+    }
+  );
+
+  assert.match(html, /data-open-local-book="abc123"/);
+  assert.match(html, /本地 TXT · 12 章/);
+  assert.match(catalogHtml, /data-open-local-chapter="0"[^>]*data-local-book-id="abc123"/);
+  assert.match(chapterHtml, /本地正文。/);
+  assert.match(chapterHtml, /data-open-local-catalog="abc123"/);
 });
 
 test('search results only show the current result count', () => {
@@ -520,6 +672,26 @@ test('bookshelf store persists books and avoids duplicates', async () => {
 
   await store.remove(store.books[0].key);
   assert.equal(store.books.length, 0);
+});
+
+test('bookshelf store adds local novels without an HTTP URL', async () => {
+  const values = new Map();
+  const storage = {
+    get(key, fallback) {
+      return values.has(key) ? values.get(key) : fallback;
+    },
+    async update(key, value) {
+      values.set(key, value);
+    }
+  };
+  const store = new BookshelfStore(storage);
+
+  await store.addLocalBook({ id: 'local-1', title: '本地书', chapterCount: 8 });
+
+  assert.equal(store.books.length, 1);
+  assert.equal(store.books[0].key, 'local:local-1');
+  assert.equal(store.books[0].kind, 'local');
+  assert.equal(store.books[0].chapterCount, 8);
 });
 
 test('navigation store maintains bounded back and forward state', () => {

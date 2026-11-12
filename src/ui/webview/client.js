@@ -81,6 +81,47 @@ const CLIENT_SCRIPT = String.raw`
         return;
       }
 
+      const uploadLocalTarget = event.target && event.target.closest ? event.target.closest('[data-upload-local-novel]') : null;
+      if (uploadLocalTarget) {
+        event.preventDefault();
+        vscode.postMessage({ command: 'uploadLocalNovel' });
+        return;
+      }
+
+      const localBookTarget = event.target && event.target.closest ? event.target.closest('[data-open-local-book]') : null;
+      if (localBookTarget) {
+        event.preventDefault();
+        hideToast();
+        vscode.postMessage({
+          command: 'openLocalBook',
+          id: localBookTarget.getAttribute('data-open-local-book') || ''
+        });
+        return;
+      }
+
+      const localCatalogTarget = event.target && event.target.closest ? event.target.closest('[data-open-local-catalog]') : null;
+      if (localCatalogTarget) {
+        event.preventDefault();
+        hideToast();
+        vscode.postMessage({
+          command: 'openLocalBook',
+          id: localCatalogTarget.getAttribute('data-open-local-catalog') || ''
+        });
+        return;
+      }
+
+      const localChapterTarget = event.target && event.target.closest ? event.target.closest('[data-open-local-chapter]') : null;
+      if (localChapterTarget) {
+        event.preventDefault();
+        hideToast();
+        vscode.postMessage({
+          command: 'openLocalChapter',
+          id: localChapterTarget.getAttribute('data-local-book-id') || '',
+          index: localChapterTarget.getAttribute('data-open-local-chapter') || ''
+        });
+        return;
+      }
+
       const addBookshelfTarget = event.target && event.target.closest ? event.target.closest('[data-add-bookshelf]') : null;
       if (addBookshelfTarget) {
         event.preventDefault();

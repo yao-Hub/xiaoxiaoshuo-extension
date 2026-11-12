@@ -8,3 +8,4 @@ PUBLISH.md
 scripts/**
 test/**
 *.vsix
+$null

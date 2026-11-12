@@ -1,9 +1,16 @@
 const vscode = require('vscode');
-const { trackBookOpen, trackReaderOpen, trackReaderSession, trackSearch } = require('../analytics');
+const {
+  trackBookOpen,
+  trackLocalUpload,
+  trackReaderOpen,
+  trackReaderSession,
+  trackSearch
+} = require('../analytics');
 const { isLikelyUrl, normalizeUrl } = require('../core/url');
 const { searchBooks } = require('../search/service');
 const { BookshelfStore } = require('./stores/bookshelf-store');
 const { HistoryStore } = require('./stores/history-store');
+const { LocalNovelStore } = require('./stores/local-novel-store');
 const { NavigationStore } = require('./stores/navigation-store');
 const { PageCache } = require('./stores/page-cache');
 const { RequestManager } = require('./stores/request-manager');
@@ -23,12 +30,13 @@ const VIEW_CONTAINER_ID = 'xiaoxiaoshuoSidebar';
 const VIEW_ID = 'xiaoxiaoshuo.readerView';
 
 class NovelReaderSidebarProvider {
-  constructor(extensionUri, storage, analyticsContext) {
+  constructor(extensionUri, storage, analyticsContext, storageUri) {
     this.extensionUri = extensionUri;
     this.storage = storage;
     this.analyticsContext = analyticsContext;
     this.bookshelfStore = new BookshelfStore(storage);
     this.historyStore = new HistoryStore(storage);
+    this.localNovelStore = new LocalNovelStore(storage, storageUri);
     this.serverApi = createServerApi(analyticsContext);
     this.pageCache = new PageCache((url, options) => this.serverApi.resolvePage(url, options));
     this.navigationStore = new NavigationStore();
@@ -172,6 +180,21 @@ class NovelReaderSidebarProvider {
         return;
       }
 
+      if (message.command === 'uploadLocalNovel') {
+        await this.importLocalNovel();
+        return;
+      }
+
+      if (message.command === 'openLocalBook') {
+        await this.openLocalBook(message.id);
+        return;
+      }
+
+      if (message.command === 'openLocalChapter') {
+        await this.openLocalChapter(message.id, message.index);
+        return;
+      }
+
       if (message.command === 'refresh') {
         await this.refresh();
         return;
@@ -233,7 +256,17 @@ class NovelReaderSidebarProvider {
       }
     });
 
-    if (this.currentMode === 'bookshelf') {
+    if (
+      this.currentMode === 'local' &&
+      (this.currentPage?.kind === 'local-list' || this.currentPage?.kind === 'local-chapter')
+    ) {
+      this.view.webview.html = renderPageHtml(
+        this.view.webview,
+        this.withNavigation(this.currentPage),
+        this.history,
+        this.searchHistory
+      );
+    } else if (this.currentMode === 'bookshelf') {
       this.showBookshelf(false);
     } else if (this.currentMode === 'history') {
       this.showHistory();
@@ -479,6 +512,10 @@ class NovelReaderSidebarProvider {
     } else if (page.kind === 'bookshelf') {
       this.currentMode = 'bookshelf';
       this.currentQuery = '';
+    } else if (page.kind === 'local-list' || page.kind === 'local-chapter') {
+      this.currentMode = 'local';
+      this.currentQuery = '';
+      this.currentUrl = '';
     } else {
       this.currentMode = 'url';
       this.currentQuery = '';
@@ -556,6 +593,127 @@ class NovelReaderSidebarProvider {
     );
   }
 
+  async importLocalNovel() {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: '上传',
+      filters: {
+        小说文本: ['txt']
+      }
+    });
+    const file = selected?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const content = await vscode.workspace.fs.readFile(file);
+      const book = await this.localNovelStore.importBuffer(
+        Buffer.from(content),
+        file.fsPath.split(/[\\/]/).pop() || file.fsPath
+      );
+      await this.bookshelfStore.addLocalBook(book);
+      trackLocalUpload(this.analyticsContext, book);
+      await this.showBookshelf(false);
+      this.showToast(`已上传《${book.title}》，共 ${book.chapterCount} 章`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.showToast(`上传失败：${message}`);
+      vscode.window.showErrorMessage(`上传本地小说失败：${message}`);
+    }
+  }
+
+  async openLocalBook(id, pushCurrent = true) {
+    if (!this.view) {
+      return;
+    }
+
+    const book = await this.localNovelStore.getBook(id);
+    if (!book) {
+      this.showToast('本地小说文件不存在，请重新上传。');
+      return;
+    }
+
+    this.finishReaderSession();
+    this.abortActiveRequest();
+    if (pushCurrent) {
+      this.pushCurrentPage();
+    }
+
+    const page = {
+      kind: 'local-list',
+      source: 'local',
+      localBookId: book.id,
+      title: book.title,
+      bookTitle: book.title,
+      author: book.author || '',
+      items: book.chapters.map((chapter, index) => ({
+        index,
+        text: chapter.title
+      }))
+    };
+    this.currentPage = page;
+    this.currentMode = 'local';
+    this.currentUrl = '';
+    this.currentQuery = '';
+    this.searchInputQuery = '';
+    ++this.loadSequence;
+    this.view.webview.html = renderPageHtml(
+      this.view.webview,
+      this.withNavigation(page),
+      this.history,
+      this.searchHistory
+    );
+  }
+
+  async openLocalChapter(id, index, pushCurrent = true) {
+    if (!this.view) {
+      return;
+    }
+
+    const book = await this.localNovelStore.getBook(id);
+    const chapterIndex = Number(index);
+    const chapter = Number.isInteger(chapterIndex) ? book?.chapters[chapterIndex] : undefined;
+    if (!book || !chapter) {
+      this.showToast('本地章节不存在，请重新打开小说。');
+      return;
+    }
+
+    this.finishReaderSession();
+    this.abortActiveRequest();
+    if (pushCurrent) {
+      this.pushCurrentPage();
+    }
+
+    const page = {
+      kind: 'local-chapter',
+      source: 'local',
+      localBookId: book.id,
+      localChapterIndex: chapterIndex,
+      title: chapter.title,
+      bookTitle: book.title,
+      author: book.author || '',
+      content: chapter.content,
+      chapterCount: book.chapters.length,
+      prevIndex: chapterIndex > 0 ? chapterIndex - 1 : undefined,
+      nextIndex: chapterIndex + 1 < book.chapters.length ? chapterIndex + 1 : undefined
+    };
+    this.currentPage = page;
+    this.currentMode = 'local';
+    this.currentUrl = '';
+    this.currentQuery = '';
+    this.searchInputQuery = '';
+    ++this.loadSequence;
+    this.view.webview.html = renderPageHtml(
+      this.view.webview,
+      this.withNavigation(page),
+      this.history,
+      this.searchHistory
+    );
+  }
+
   async addCurrentPageToBookshelf() {
     if (!this.view || !this.currentPage || this.currentPage.kind !== 'chapter') {
       return;
@@ -574,6 +732,10 @@ class NovelReaderSidebarProvider {
   }
 
   async removeBookshelfItem(key) {
+    const item = this.bookshelf.find((entry) => entry.key === key);
+    if (item?.kind === 'local' && item.localId) {
+      await this.localNovelStore.remove(item.localId);
+    }
     await this.bookshelfStore.remove(key);
     if (!this.view || !this.currentPage || this.currentPage.kind !== 'bookshelf') {
       return;
@@ -599,6 +761,19 @@ class NovelReaderSidebarProvider {
 
     if (this.currentMode === 'bookshelf') {
       await this.showBookshelf(false);
+      return;
+    }
+
+    if (this.currentMode === 'local' && this.currentPage?.localBookId) {
+      if (this.currentPage.kind === 'local-chapter') {
+        await this.openLocalChapter(
+          this.currentPage.localBookId,
+          this.currentPage.localChapterIndex,
+          false
+        );
+      } else {
+        await this.openLocalBook(this.currentPage.localBookId, false);
+      }
       return;
     }
 

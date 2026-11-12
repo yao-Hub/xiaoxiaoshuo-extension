@@ -228,6 +228,23 @@ function trackReaderSession(context, page, durationMs) {
   });
 }
 
+function trackLocalUpload(context, book) {
+  void sendAnalyticsEvent(context, {
+    eventType: 'local_upload',
+    page: 'bookshelf',
+    bookTitle: String(book?.title || '')
+      .trim()
+      .slice(0, 200),
+    metadata: {
+      chapterCount: Math.max(0, Math.round(Number(book?.chapterCount) || 0)),
+      fileSize: Math.max(0, Math.round(Number(book?.fileSize) || 0)),
+      sourceFilename: String(book?.sourceFilename || '')
+        .trim()
+        .slice(0, 255)
+    }
+  });
+}
+
 async function startExtensionAnalytics(context) {
   await sendAnalyticsEvent(context, {
     eventType: 'app_session',
@@ -251,6 +268,7 @@ module.exports = {
   getReaderBookTitle,
   scheduleExtensionAnalytics,
   trackBookOpen,
+  trackLocalUpload,
   trackReaderOpen,
   trackReaderSession,
   trackSearch

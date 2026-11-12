@@ -26,6 +26,14 @@ function getPanelTitle(page) {
     return '书架';
   }
 
+  if (page && page.kind === 'local-list') {
+    return page.title ? `本地: ${page.title}` : '本地小说';
+  }
+
+  if (page && page.kind === 'local-chapter') {
+    return page.title ? `本地阅读: ${page.title}` : '本地阅读';
+  }
+
   if (!page || !page.kind) {
     return '小小小说';
   }
@@ -199,6 +207,36 @@ function renderPageHtml(webview, page, history = [], searchHistory = []) {
     });
   }
 
+  if (page.kind === 'local-list') {
+    return renderShell(webview, {
+      kind: 'local-list',
+      url: '',
+      value: '',
+      title: page.title || '本地小说',
+      pageTitle: getPanelTitle(page),
+      backAvailable: Boolean(page.backAvailable),
+      forwardAvailable: Boolean(page.forwardAvailable),
+      history,
+      searchHistory,
+      body: renderLocalCatalogBody(page)
+    });
+  }
+
+  if (page.kind === 'local-chapter') {
+    return renderShell(webview, {
+      kind: 'local-chapter',
+      url: '',
+      value: '',
+      title: page.title || '本地阅读',
+      pageTitle: getPanelTitle(page),
+      backAvailable: Boolean(page.backAvailable),
+      forwardAvailable: Boolean(page.forwardAvailable),
+      history,
+      searchHistory,
+      body: renderLocalChapterBody(page)
+    });
+  }
+
   if (page.kind === 'list') {
     return renderShell(webview, {
       kind: 'list',
@@ -314,23 +352,94 @@ function renderHistoryPageBody(history, _searchHistory) {
 function renderBookshelfBody(books) {
   const items = Array.isArray(books) ? books : [];
   const rows = items
-    .map(
-      (item) => `
+    .map((item) => {
+      const isLocal = item.kind === 'local' && item.localId;
+      const openAttribute = isLocal
+        ? `data-open-local-book="${escapeAttribute(item.localId)}"`
+        : `data-open-url="${escapeAttribute(item.url)}"`;
+      const meta = isLocal
+        ? `本地 TXT · ${Number(item.chapterCount) || 1} 章`
+        : item.author || item.url;
+
+      return `
       <div class="bookshelf-row">
-        <button class="history-page-link bookshelf-link" type="button" data-open-url="${escapeAttribute(item.url)}">
+        <button class="history-page-link bookshelf-link" type="button" ${openAttribute}>
           <span class="history-title">${escapeHtml(item.title || item.url)}</span>
-          <span class="history-url">${escapeHtml(item.author || item.url)}</span>
+          <span class="history-url">${escapeHtml(meta)}</span>
         </button>
         <button class="bookshelf-remove" type="button" data-remove-bookshelf="${escapeAttribute(item.key)}">移出</button>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
 
   return `
     <section class="bookshelf-view">
-      <h1>书架</h1>
+      <div class="bookshelf-head">
+        <h1>书架</h1>
+        <button class="button bookshelf-upload-button" type="button" data-upload-local-novel>上传本地小说</button>
+      </div>
       ${items.length ? `<div class="bookshelf-list">${rows}</div>` : '<div class="history-empty">书架为空</div>'}
     </section>`;
+}
+
+function renderLocalCatalogBody(page) {
+  const items = Array.isArray(page.items) ? page.items : [];
+  const rows = items
+    .map(
+      (item) => `
+      <tr>
+        <td class="title-cell">
+          <button class="item-link" type="button" data-open-local-chapter="${escapeAttribute(
+            item.index
+          )}" data-local-book-id="${escapeAttribute(page.localBookId)}">${escapeHtml(
+            item.text || `第 ${item.index + 1} 章`
+          )}</button>
+        </td>
+      </tr>`
+    )
+    .join('');
+
+  return `
+    <section class="local-catalog-view">
+      <div class="local-book-summary">
+        <h1>${escapeHtml(page.title || '本地小说')}</h1>
+        <p>本地 TXT · 共 ${items.length} 章</p>
+      </div>
+      ${
+        items.length
+          ? `<table class="list-table"><tbody>${rows}</tbody></table>`
+          : '<div class="history-empty">这本小说还没有章节</div>'
+      }
+    </section>`;
+}
+
+function renderLocalChapterBody(page) {
+  const bookId = escapeAttribute(page.localBookId);
+  const prevDisabled = Number.isInteger(page.prevIndex) ? '' : 'disabled';
+  const nextDisabled = Number.isInteger(page.nextIndex) ? '' : 'disabled';
+  const navigation = (position) => `
+    <nav class="chapter-nav${position === 'top' ? ' chapter-nav-top' : ''}" aria-label="章节导航">
+      <button class="nav-button" type="button" data-open-local-chapter="${escapeAttribute(
+        page.prevIndex ?? ''
+      )}" data-local-book-id="${bookId}" ${prevDisabled}>上一章</button>
+      <button class="nav-button nav-directory" type="button" data-open-local-catalog="${bookId}">目录</button>
+      <button class="nav-button" type="button" data-open-local-chapter="${escapeAttribute(
+        page.nextIndex ?? ''
+      )}" data-local-book-id="${bookId}" ${nextDisabled}>下一章</button>
+    </nav>`;
+
+  return `
+    <article class="chapter-view">
+      <div class="chapter-title-row">
+        <h1>${escapeHtml(page.title || '本地阅读')}</h1>
+      </div>
+      <p class="source">${escapeHtml(page.bookTitle || '本地小说')} · 第 ${
+        Number(page.localChapterIndex) + 1
+      } / ${Number(page.chapterCount) || 1} 章</p>
+      ${navigation('top')}
+      <div class="content">${renderChapterContent(page)}</div>
+      ${navigation('bottom')}
+    </article>`;
 }
 
 function renderSearchSuggestions(searchHistory) {
@@ -462,16 +571,6 @@ function renderTocList(items, currentUrl) {
 }
 
 function renderChapterBodyWithToc(page) {
-  const paragraphs = String(page.content || '')
-    .split(/\n{2,}/)
-    .map((line) => `<p>${escapeHtml(line).replace(/\n/g, '<br>')}</p>`)
-    .join('');
-  const content = page.contentUnavailable
-    ? `<p class="content-unavailable">${escapeHtml(
-        page.contentUnavailableReason || '当前内容暂不可用。'
-      )}</p>`
-    : paragraphs;
-
   return `
     <article class="chapter-view">
       <div class="chapter-title-row">
@@ -480,10 +579,23 @@ function renderChapterBodyWithToc(page) {
       </div>
       <p class="source">${escapeHtml(page.url || '')}</p>
       ${renderChapterNavigation(page, 'top')}
-      <div class="content">${content}</div>
+      <div class="content">${renderChapterContent(page)}</div>
       ${renderChapterNavigation(page, 'bottom')}
       ${renderTocBody(page)}
     </article>`;
+}
+
+function renderChapterContent(page) {
+  if (page.contentUnavailable) {
+    return `<p class="content-unavailable">${escapeHtml(
+      page.contentUnavailableReason || '当前内容暂不可用。'
+    )}</p>`;
+  }
+
+  return String(page.content || '')
+    .split(/\n{2,}/)
+    .map((line) => `<p>${escapeHtml(line).replace(/\n/g, '<br>')}</p>`)
+    .join('');
 }
 
 function renderChapterNavigation(page, position) {
@@ -515,7 +627,12 @@ function renderShell(webview, page) {
     value: page.value || (page.kind === 'search' ? page.query : page.url) || '',
     mode: page.mode || (page.kind === 'search' ? 'title' : 'url'),
     canRefresh: Boolean(
-      page.url || page.mode === 'title' || page.kind === 'search' || page.kind === 'history'
+      page.url ||
+      page.mode === 'title' ||
+      page.kind === 'search' ||
+      page.kind === 'history' ||
+      page.kind === 'local-list' ||
+      page.kind === 'local-chapter'
     ),
     title: page.title,
     canGoBack: Boolean(page.backAvailable),
@@ -526,7 +643,12 @@ function renderShell(webview, page) {
   const backDisabled = page.backAvailable ? '' : 'disabled';
   const forwardDisabled = page.forwardAvailable ? '' : 'disabled';
   const refreshDisabled =
-    page.url || page.mode === 'title' || page.kind === 'search' || page.kind === 'history'
+    page.url ||
+    page.mode === 'title' ||
+    page.kind === 'search' ||
+    page.kind === 'history' ||
+    page.kind === 'local-list' ||
+    page.kind === 'local-chapter'
       ? ''
       : 'disabled';
   const loadingProgress =

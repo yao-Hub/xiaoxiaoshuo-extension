@@ -9,7 +9,8 @@ function activate(context) {
   sidebarProvider = new NovelReaderSidebarProvider(
     context.extensionUri,
     context.globalState,
-    context
+    context,
+    context.globalStorageUri
   );
 
   context.subscriptions.push(

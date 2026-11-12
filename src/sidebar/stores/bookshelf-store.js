@@ -2,6 +2,10 @@ const BOOKSHELF_KEY = 'xiaoxiaoshuo.bookshelf';
 const MAX_BOOKS = 100;
 
 function getBookKey(page) {
+  if (page?.localBookId) {
+    return `local:${page.localBookId}`;
+  }
+
   if (page?.catalogUrl) {
     return `catalog:${page.catalogUrl}`;
   }
@@ -34,8 +38,8 @@ class BookshelfStore {
           item &&
           typeof item.key === 'string' &&
           item.key &&
-          typeof item.url === 'string' &&
-          item.url
+          (typeof item.url === 'string' || typeof item.localId === 'string') &&
+          (item.url || item.localId)
       )
       .slice(0, MAX_BOOKS);
   }
@@ -59,6 +63,27 @@ class BookshelfStore {
       addedAt: Date.now()
     };
     this.books = [book, ...this.books.filter((item) => item.key !== key)].slice(0, MAX_BOOKS);
+    await this.persist();
+    return true;
+  }
+
+  async addLocalBook(book) {
+    if (!book?.id) {
+      return false;
+    }
+
+    const key = `local:${book.id}`;
+    const item = {
+      key,
+      kind: 'local',
+      localId: book.id,
+      title: String(book.title || '未命名小说'),
+      author: `本地 TXT · ${Number(book.chapterCount) || 1} 章`,
+      chapterCount: Number(book.chapterCount) || 1,
+      url: key,
+      addedAt: Date.now()
+    };
+    this.books = [item, ...this.books.filter((entry) => entry.key !== key)].slice(0, MAX_BOOKS);
     await this.persist();
     return true;
   }

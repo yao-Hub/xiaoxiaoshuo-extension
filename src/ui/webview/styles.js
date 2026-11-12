@@ -434,7 +434,35 @@ const WEBVIEW_STYLES = String.raw`
     }
 
     .bookshelf-view h1 {
+      margin: 0;
+    }
+
+    .bookshelf-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       margin-bottom: 18px;
+    }
+
+    .bookshelf-upload-button {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      font-size: 0.82rem;
+    }
+
+    .local-book-summary {
+      margin-bottom: 18px;
+    }
+
+    .local-book-summary h1 {
+      margin-bottom: 6px;
+    }
+
+    .local-book-summary p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
     }
 
     .bookshelf-row {
