@@ -4,6 +4,7 @@ const SERVER_BASE_URL = 'https://xiaoxiaoshuo.top';
 const REQUEST_TIMEOUT_MS = 30000;
 
 function createServerApi(context) {
+  const extensionVersion = String(context?.extension?.packageJSON?.version || '');
   let token = '';
   let tokenPromise;
 
@@ -22,7 +23,8 @@ function createServerApi(context) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'X-Platform': 'extension'
+          'X-Platform': 'extension',
+          'X-Extension-Version': extensionVersion
         },
         body: JSON.stringify({ machineId }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -54,7 +56,8 @@ function createServerApi(context) {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${authToken}`,
-        'X-Platform': 'extension'
+        'X-Platform': 'extension',
+        'X-Extension-Version': extensionVersion
       },
       signal: combineSignals(options.signal, REQUEST_TIMEOUT_MS)
     });

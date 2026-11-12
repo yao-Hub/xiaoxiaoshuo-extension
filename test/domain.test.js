@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { buildSearchMetadata, getReaderBookTitle } = require('../src/analytics');
 const { getSearchTitleScore, normalizeSearchText, searchBooks } = require('../src/search/service');
-const { mapResolvedPage } = require('../src/server/client');
+const { createServerApi, mapResolvedPage } = require('../src/server/client');
 const { renderHomeHtml, renderPageHtml } = require('../src/ui/renderer');
 const { BookshelfStore } = require('../src/sidebar/stores/bookshelf-store');
 const { HistoryStore } = require('../src/sidebar/stores/history-store');
@@ -146,6 +146,35 @@ test('server catalog and chapter responses map to plugin pages', () => {
   assert.equal(chapter.kind, 'chapter');
   assert.equal(chapter.content, '正文');
   assert.equal(chapter.nextUrl, 'https://example.com/chapter/2');
+});
+
+test('server requests include the extension version header', async () => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url: String(url), headers: options.headers });
+    const data = String(url).endsWith('/api/extension/session')
+      ? { token: 'test-token' }
+      : { items: [], filteredItems: [], groups: [] };
+    return new Response(JSON.stringify({ code: 0, msg: 'ok', data }), { status: 200 });
+  };
+
+  try {
+    const api = createServerApi({
+      extension: { packageJSON: { version: '0.1.6' } },
+      globalState: {
+        get: () => 'TEST-MACHINE-ID',
+        update: async () => undefined
+      }
+    });
+    await api.search('完美世界');
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].headers['X-Extension-Version'], '0.1.6');
+  assert.equal(requests[1].headers['X-Extension-Version'], '0.1.6');
 });
 
 test('webview renderer injects isolated styles and client state', () => {

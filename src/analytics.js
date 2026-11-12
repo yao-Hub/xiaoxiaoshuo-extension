@@ -109,7 +109,8 @@ async function sendAnalyticsEvent(context, event) {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'X-Platform': 'extension'
+        'X-Platform': 'extension',
+        'X-Extension-Version': String(context?.extension?.packageJSON?.version || '')
       },
       signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
