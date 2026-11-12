@@ -427,12 +427,6 @@ const WEBVIEW_STYLES = String.raw`
       background: var(--vscode-toolbar-hoverBackground);
     }
 
-    .history-page-section {
-      margin-top: 28px;
-      padding-top: 20px;
-      border-top: 1px solid var(--border);
-    }
-
     .bookshelf-view h1 {
       margin: 0;
     }
@@ -490,7 +484,7 @@ const WEBVIEW_STYLES = String.raw`
       color: var(--reader-fg);
     }
 
-    .history-page-section h2 {
+    .history-section-head h2 {
       margin: 0;
       font-size: 1.05rem;
     }

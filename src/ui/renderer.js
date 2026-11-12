@@ -329,23 +329,21 @@ function renderHistoryPageBody(history, _searchHistory) {
 
   return `
     <section class="history-view">
-      <div class="history-page-section">
-        <div class="history-section-head">
-          <h2>阅读历史</h2>
-          ${readItems.length ? '<button class="history-manage-toggle" type="button" data-toggle-history-management>管理</button>' : ''}
-        </div>
-        ${
-          readItems.length
-            ? `
-          <div class="history-manage-actions" hidden>
-            <button class="history-manage-button" type="button" data-select-all-history>全选</button>
-            <button class="history-manage-button" type="button" data-delete-selected-history>删除选中</button>
-            <button class="history-manage-button danger" type="button" data-clear-reading-history>全部删除</button>
-          </div>`
-            : ''
-        }
-        ${readItems.length ? readButtons : '<div class="history-empty">暂无阅读历史</div>'}
+      <div class="history-section-head">
+        <h2>阅读历史</h2>
+        ${readItems.length ? '<button class="history-manage-toggle" type="button" data-toggle-history-management>管理</button>' : ''}
       </div>
+      ${
+        readItems.length
+          ? `
+        <div class="history-manage-actions" hidden>
+          <button class="history-manage-button" type="button" data-select-all-history>全选</button>
+          <button class="history-manage-button" type="button" data-delete-selected-history>删除选中</button>
+          <button class="history-manage-button danger" type="button" data-clear-reading-history>全部删除</button>
+        </div>`
+          : ''
+      }
+      ${readItems.length ? readButtons : '<div class="history-empty">暂无阅读历史</div>'}
     </section>`;
 }
 

@@ -352,7 +352,7 @@ test('local uploads send title, chapter count, size and filename analytics', asy
   try {
     trackLocalUpload(
       {
-        extension: { packageJSON: { version: '0.1.7' } },
+        extension: { packageJSON: { version: '0.1.8' } },
         globalState: {
           get: () => 'TEST-MACHINE-ID',
           update: async () => undefined
@@ -467,6 +467,13 @@ test('catalog unavailable page offers a start reading action', () => {
     html,
     /class="button catalog-start-button"[^>]*data-open-url="https:\/\/example\.com\/chapter\/1"/
   );
+});
+
+test('reading history starts without the legacy divider section', () => {
+  const html = renderPageHtml({}, { kind: 'history', items: [] });
+
+  assert.match(html, /class="history-section-head"/);
+  assert.doesNotMatch(html, /class="history-page-section"/);
 });
 
 test('bookshelf page lists saved books with a remove action', () => {
