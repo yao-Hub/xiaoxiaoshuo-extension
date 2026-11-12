@@ -7,6 +7,7 @@ const { HistoryStore } = require('./stores/history-store');
 const { NavigationStore } = require('./stores/navigation-store');
 const { PageCache } = require('./stores/page-cache');
 const { RequestManager } = require('./stores/request-manager');
+const { createServerApi } = require('../server/client');
 const {
   renderErrorHtml,
   renderHistoryPage,
@@ -28,7 +29,8 @@ class NovelReaderSidebarProvider {
     this.analyticsContext = analyticsContext;
     this.bookshelfStore = new BookshelfStore(storage);
     this.historyStore = new HistoryStore(storage);
-    this.pageCache = new PageCache();
+    this.serverApi = createServerApi(analyticsContext);
+    this.pageCache = new PageCache((url, options) => this.serverApi.resolvePage(url, options));
     this.navigationStore = new NavigationStore();
     this.requestManager = new RequestManager();
     this.currentPage = undefined;
@@ -361,6 +363,7 @@ class NovelReaderSidebarProvider {
 
     try {
       const page = await searchBooks(value, {
+        serverApi: this.serverApi,
         signal: requestController.signal,
         onProgress: reportProgress,
         onPartialResults: (partialPage) => {

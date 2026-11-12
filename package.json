@@ -16,7 +16,7 @@
     "novel",
     "novel reader"
   ],
-  "version": "0.1.5",
+  "version": "0.1.7",
   "publisher": "xiaoxiaoshuo",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -79,9 +79,6 @@
     "check": "npm run test && npm run format:check",
     "package:vsix": "npx @vscode/vsce package",
     "publish:marketplace": "npx @vscode/vsce publish"
-  },
-  "dependencies": {
-    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

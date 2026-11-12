@@ -246,6 +246,7 @@ function scheduleExtensionAnalytics(context) {
 
 module.exports = {
   buildSearchMetadata,
+  getMachineId,
   getReaderBookTitle,
   scheduleExtensionAnalytics,
   trackBookOpen,

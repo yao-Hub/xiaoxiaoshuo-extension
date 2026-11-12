@@ -1,9 +1,8 @@
-const { loadPage } = require('../../content/page-loader');
-
 const MAX_PAGE_CACHE_ITEMS = 12;
 
 class PageCache {
-  constructor() {
+  constructor(loadPage) {
+    this.loadPage = loadPage;
     this.entries = new Map();
   }
 
@@ -33,7 +32,7 @@ class PageCache {
       return existing.promise;
     }
 
-    const promise = loadPage(url, { onProgress, signal })
+    const promise = this.loadPage(url, { onProgress, signal })
       .then((page) => {
         this.store(url, page);
         return page;
@@ -50,7 +49,7 @@ class PageCache {
     if (!url || this.entries.has(url)) {
       return;
     }
-    const promise = loadPage(url)
+    const promise = this.loadPage(url)
       .then((page) => {
         this.store(url, page);
         return page;

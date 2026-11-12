@@ -1,104 +1,51 @@
-const { SEARCH_SOURCES } = require('./registry');
-
-const SEARCH_TIMEOUT_MS = 30000;
-
-function getSourceLabel(source) {
-  return source.publicLabel || source.label;
-}
-
-function formatSearchError(source, error) {
-  const label = getSourceLabel(source);
-  const message = error instanceof Error ? error.message : String(error);
-  const networkHint = '该网站可能需要科学上网工具。连接后请重新加载 VS Code 窗口再试。';
-
-  if (source.private) {
-    return `${label}搜索失败，${networkHint}`;
-  }
-
-  return `${label}搜索失败：${message}。${networkHint}`;
-}
-
 async function searchBooks(input, options = {}) {
   const query = String(input || '').trim();
   if (!query) {
     throw new Error('请输入要搜索的书名。');
   }
-  throwIfAborted(options.signal);
-
-  const activeSources = SEARCH_SOURCES;
-  const sourceTimeoutMs = Number.isFinite(options.sourceTimeoutMs)
-    ? options.sourceTimeoutMs
-    : SEARCH_TIMEOUT_MS;
-  let completed = 0;
-  const groups = new Array(activeSources.length);
-  options.onProgress?.({
-    fraction: 0.05,
-    label: `正在搜索全部来源`
-  });
-  await Promise.all(
-    activeSources.map(async (provider, index) => {
-      let group;
-      try {
-        throwIfAborted(options.signal);
-        const mode = provider.searchModes[0];
-        const items = await runProviderSearch(mode, query, options.signal, sourceTimeoutMs);
-        group = {
-          source: provider.source,
-          label: getSourceLabel(provider),
-          items: sortSearchItems(Array.isArray(items) ? items : [], query).map((item) => ({
-            ...item,
-            mode: mode.key
-          })),
-          error: ''
-        };
-      } catch (error) {
-        group = {
-          source: provider.source,
-          label: getSourceLabel(provider),
-          items: [],
-          error: formatSearchError(provider, error)
-        };
-      } finally {
-        completed += 1;
-        groups[index] = group;
-        options.onPartialResults?.(createSearchPage(query, activeSources, groups, completed));
-        options.onProgress?.({
-          fraction: 0.1 + (completed / activeSources.length) * 0.85,
-          label: `已完成 ${completed}/${activeSources.length} 个网站`
-        });
-      }
-    })
-  );
-
-  throwIfAborted(options.signal);
-  return createSearchPage(query, activeSources, groups, activeSources.length);
-}
-
-function runProviderSearch(mode, query, signal, timeoutMs) {
-  const controller = new AbortController();
-  let timeout;
-  const abort = () => controller.abort();
-
-  if (signal?.aborted) {
-    abort();
-  } else {
-    signal?.addEventListener('abort', abort, { once: true });
+  if (!options.serverApi) {
+    throw new Error('搜索服务不可用，请重新加载插件。');
   }
 
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort();
-      reject(new Error(`搜索超时（${Math.round(timeoutMs / 1000)} 秒）。`));
-    }, timeoutMs);
+  options.onProgress?.({ fraction: 0.1, label: '正在连接服务器' });
+  const response = await options.serverApi.search(query, {
+    page: 1,
+    pageSize: 50,
+    signal: options.signal
   });
+  throwIfAborted(options.signal);
 
-  return Promise.race([
-    Promise.resolve().then(() => mode.search(query, { signal: controller.signal })),
-    timeoutPromise
-  ]).finally(() => {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', abort);
-  });
+  const allBooks = [...(response.items || []), ...(response.filteredItems || [])];
+  const seen = new Set();
+  const items = sortSearchItems(
+    allBooks
+      .filter((book) => {
+        const key = `${book.source}:${book.catalogUrl || book.readUrl}`;
+        if (!book.title || !key || seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .map((book) => ({
+        text: book.title,
+        meta: book.author || '',
+        intro: book.intro || '',
+        chaptersUrl: book.catalogUrl || book.readUrl || '',
+        url: book.readUrl || book.catalogUrl || '',
+        coverUrl: book.coverUrl || '',
+        source: book.source || '',
+        sourceLabel: book.sourceLabel || '',
+        requiresMembership: Boolean(book.requiresMembership),
+        unavailableReason: book.unavailableReason || ''
+      })),
+    query
+  );
+
+  const page = createSearchPage(query, buildSearchGroups(response.groups, items), items);
+  options.onPartialResults?.(page);
+  options.onProgress?.({ fraction: 0.95, label: '搜索结果已返回' });
+  return page;
 }
 
 function throwIfAborted(signal) {
@@ -109,53 +56,47 @@ function throwIfAborted(signal) {
   }
 }
 
-function createSearchPage(query, sources, sourceGroups, completedCount = sourceGroups.length) {
-  const groups = sourceGroups
-    .filter(Boolean)
-    .slice(0, sources.length)
-    .sort((left, right) => compareSearchGroups(left, right, query));
-
+function createSearchPage(query, groups, items) {
   return {
     kind: 'search',
     source: 'search',
     url: '',
     query,
     title: `搜索：${query}`,
-    pendingCount: Math.max(0, sources.length - completedCount),
+    pendingCount: 0,
     groups,
-    items: groups
-      .flatMap((group) => group.items)
-      .sort(
-        (left, right) =>
-          getSearchTitleScore(right.text, query) - getSearchTitleScore(left.text, query)
-      )
+    items
   };
 }
 
-function compareSearchGroups(left, right, query) {
-  const rankDifference = getSearchGroupRank(left) - getSearchGroupRank(right);
-  if (rankDifference) {
-    return rankDifference;
+function buildSearchGroups(sourceGroups, items) {
+  const groups = new Map();
+  for (const group of Array.isArray(sourceGroups) ? sourceGroups : []) {
+    groups.set(group.source, {
+      source: group.source,
+      label: group.label || group.source,
+      items: [],
+      error: String(group.error || '')
+    });
   }
-
-  if (left.items.length && right.items.length) {
-    return (
-      getSearchTitleScore(right.items[0].text, query) -
-      getSearchTitleScore(left.items[0].text, query)
-    );
+  for (const item of items) {
+    const source = item.source || 'server';
+    if (!groups.has(source)) {
+      groups.set(source, {
+        source,
+        label: item.sourceLabel || source,
+        items: [],
+        error: ''
+      });
+    }
+    groups.get(source).items.push(item);
   }
-
-  return 0;
-}
-
-function getSearchGroupRank(group) {
-  if (Array.isArray(group.items) && group.items.length) {
-    return 0;
-  }
-  if (group.error) {
-    return 2;
-  }
-  return 1;
+  return [...groups.values()].sort((left, right) => {
+    if (Boolean(left.error) !== Boolean(right.error)) {
+      return left.error ? 1 : -1;
+    }
+    return right.items.length - left.items.length;
+  });
 }
 
 function sortSearchItems(items, query) {
@@ -226,6 +167,7 @@ function normalizeSearchText(value) {
 }
 
 module.exports = {
+  buildSearchGroups,
   getSearchTitleScore,
   normalizeSearchText,
   searchBooks

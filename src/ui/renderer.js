@@ -388,7 +388,7 @@ function renderSearchBody(page) {
     <section class="search-view">
       <h1>“${escapeHtml(page.query || '')}” 的搜索结果</h1>
       <p class="search-summary">${summary}</p>
-      ${failedCount ? '<div class="search-alert">部分结果搜索失败，可能需要科学上网工具。连接后请重新加载 VS Code 窗口再试。</div>' : ''}
+      ${failedCount ? '<div class="search-alert">部分来源搜索失败，请稍后重试。</div>' : ''}
       <div class="search-results-flat">
         ${rows || '<div class="search-empty">没有找到相关作品</div>'}
       </div>

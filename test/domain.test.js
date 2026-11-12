@@ -2,15 +2,12 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { buildSearchMetadata, getReaderBookTitle } = require('../src/analytics');
 const { getSearchTitleScore, normalizeSearchText, searchBooks } = require('../src/search/service');
+const { mapResolvedPage } = require('../src/server/client');
 const { renderHomeHtml, renderPageHtml } = require('../src/ui/renderer');
-const { SEARCH_SOURCES } = require('../src/search/registry');
 const { BookshelfStore } = require('../src/sidebar/stores/bookshelf-store');
 const { HistoryStore } = require('../src/sidebar/stores/history-store');
 const { NavigationStore } = require('../src/sidebar/stores/navigation-store');
 const { isLikelyUrl, normalizeUrl, resolveUrl } = require('../src/core/url');
-const fanqie = require('../src/content/sources/fanqie');
-const qimao = require('../src/content/sources/qimao');
-const shuqi = require('../src/content/sources/shuqi');
 
 test('URL normalization accepts HTTP(S) and rejects unsafe schemes', () => {
   assert.deepEqual(normalizeUrl('example.com/book/1'), {
@@ -68,145 +65,87 @@ test('reader analytics resolves book title from chapter title formats', () => {
   assert.equal(getReaderBookTitle({ title: '提要 | 东皋录' }), '东皋录');
 });
 
-test('search publishes completed source results before every source finishes', async () => {
-  const originalSources = SEARCH_SOURCES.splice(0);
-  let finishSlowSource;
-  const startedSources = [];
-  SEARCH_SOURCES.push(
-    {
-      source: 'fast',
-      label: '快速站点',
-      searchModes: [
-        {
-          key: 'web',
-          search: async () => {
-            startedSources.push('fast');
-            return [
-              {
-                text: '完美世界',
-                url: 'https://example.com/book/1/1.html',
-                chaptersUrl: 'https://example.com/book/1/'
-              }
-            ];
-          }
-        }
-      ]
+test('search uses server results and maps books into openable items', async () => {
+  const updates = [];
+  const page = await searchBooks('完美世界', {
+    serverApi: {
+      async search(query) {
+        assert.equal(query, '完美世界');
+        return {
+          items: [
+            {
+              title: '完美世界',
+              author: '辰东',
+              intro: '简介',
+              source: 'qidian',
+              sourceLabel: '起点中文网',
+              catalogUrl: 'https://example.com/book/1/',
+              readUrl: 'https://example.com/chapter/1'
+            }
+          ],
+          filteredItems: [],
+          groups: [{ source: 'qidian', label: '起点中文网', error: '' }]
+        };
+      }
     },
-    {
-      source: 'slow',
-      label: '慢速站点',
-      searchModes: [
-        {
-          key: 'web',
-          search: () => {
-            startedSources.push('slow');
-            return new Promise((resolve) => {
-              finishSlowSource = () => resolve([]);
-            });
-          }
-        }
-      ]
+    onPartialResults(value) {
+      updates.push(value);
     }
-  );
-
-  try {
-    const updates = [];
-    const resultPromise = searchBooks('完美世界', {
-      onPartialResults(page) {
-        updates.push(page);
-      }
-    });
-
-    while (!updates.some((page) => page.items.length)) {
-      await new Promise(setImmediate);
-    }
-
-    assert.deepEqual(startedSources.sort(), ['fast', 'slow']);
-    assert.equal(updates.at(-1).items[0].text, '完美世界');
-    assert.equal(updates.at(-1).pendingCount, 1);
-
-    finishSlowSource();
-    const finalPage = await resultPromise;
-    assert.equal(finalPage.items.length, 1);
-    assert.equal(finalPage.pendingCount, 0);
-  } finally {
-    SEARCH_SOURCES.splice(0, SEARCH_SOURCES.length, ...originalSources);
-  }
-});
-
-test('search releases a source after its timeout', async () => {
-  const originalSources = SEARCH_SOURCES.splice(0);
-  SEARCH_SOURCES.push({
-    source: 'stalled',
-    label: '卡住站点',
-    searchModes: [
-      {
-        key: 'web',
-        search: () => new Promise(() => {})
-      }
-    ]
   });
 
-  try {
-    const page = await searchBooks('完美世界', { sourceTimeoutMs: 20 });
-    assert.equal(page.pendingCount, 0);
-    assert.equal(page.groups.length, 1);
-    assert.match(page.groups[0].error, /搜索超时（0 秒）/);
-  } finally {
-    SEARCH_SOURCES.splice(0, SEARCH_SOURCES.length, ...originalSources);
-  }
+  assert.equal(page.items[0].text, '完美世界');
+  assert.equal(page.items[0].chaptersUrl, 'https://example.com/book/1/');
+  assert.equal(page.groups[0].label, '起点中文网');
+  assert.equal(updates.length, 1);
 });
 
-test('fanqie content decodes custom font glyphs', () => {
-  assert.equal(fanqie.decodeFanqieText('\uE3E9\uE3EA\uE408'), '在主o');
-});
-
-test('qimao content keeps only the article body', () => {
-  const html = `
-    <div>搜索 立即登录 返回 快捷键指南 举报</div>
-    <div class="chapter-detail-article">
-      <div class="article">
-        <p>第一段正文。</p>
-        <p>第二段正文。</p>
-      </div>
-    </div>
-    <div class="reader-report">举报类型 举报内容 联系方式</div>
-  `;
-  const content = qimao.extractQimaoChapterContent(html);
-
-  assert.equal(content, '第一段正文。\n\n第二段正文。');
-  assert.doesNotMatch(content, /立即登录|举报|快捷键/);
-  assert.equal(qimao.extractQimaoChapterContent('<div>立即登录 举报 章节链接</div>'), '');
-});
-
-test('qimao routes app-only books through the reader fallback', () => {
-  assert.equal(qimao.match('https://www.qimao.com/app/book/1910560/read/1/'), true);
-});
-
-test('shuqi catalog keeps only chapters from the current book', () => {
-  const html = `
-    <a href="https://www.shuqi.com/reader?bid=8855023&amp;cid=1966572">1.第1章 大千世界</a>
-    <a href="https://www.shuqi.com/reader?bid=8855023&amp;cid=1966573">2.第2章 位面裂缝</a>
-    <a href="https://www.shuqi.com/reader?bid=999999&amp;cid=1">其他书籍</a>
-    <a href="https://www.shuqi.com/about.html">书旗用户服务协议</a>
-  `;
-  const items = shuqi.extractChapterItems(
-    html,
-    'https://www.shuqi.com/chapter?bid=8855023',
-    '8855023'
+test('search surfaces server errors without a network-tool hint', async () => {
+  await assert.rejects(
+    searchBooks('完美世界', {
+      serverApi: {
+        async search() {
+          throw new Error('服务器请求失败（HTTP 503）。');
+        }
+      }
+    }),
+    (error) => /服务器请求失败/.test(error.message) && !/科学/.test(error.message)
   );
+});
 
-  assert.deepEqual(
-    items.map((item) => item.text),
-    ['第1章 大千世界', '第2章 位面裂缝']
+test('server catalog and chapter responses map to plugin pages', () => {
+  const catalog = mapResolvedPage(
+    {
+      kind: 'catalog',
+      book: {
+        title: '完美世界',
+        author: '辰东',
+        source: 'qidian',
+        catalogUrl: 'https://example.com/book/1/'
+      },
+      chapters: [{ title: '第一章', url: 'https://example.com/chapter/1' }]
+    },
+    'https://example.com/book/1/'
   );
-  assert.deepEqual(
-    items.map((item) => item.url),
-    [
-      'https://www.shuqi.com/reader?bid=8855023&cid=1966572',
-      'https://www.shuqi.com/reader?bid=8855023&cid=1966573'
-    ]
+  assert.equal(catalog.kind, 'list');
+  assert.equal(catalog.items[0].text, '第一章');
+  assert.equal(catalog.bookTitle, '完美世界');
+
+  const chapter = mapResolvedPage(
+    {
+      kind: 'chapter',
+      title: '第一章',
+      content: '正文',
+      source: 'qidian',
+      chapterUrl: 'https://example.com/chapter/1',
+      catalogUrl: 'https://example.com/book/1/',
+      prevUrl: '',
+      nextUrl: 'https://example.com/chapter/2'
+    },
+    'https://example.com/chapter/1'
   );
+  assert.equal(chapter.kind, 'chapter');
+  assert.equal(chapter.content, '正文');
+  assert.equal(chapter.nextUrl, 'https://example.com/chapter/2');
 });
 
 test('webview renderer injects isolated styles and client state', () => {
@@ -339,30 +278,11 @@ test('search results render incrementally with an inline yellow failure notice',
 
   assert.match(html, /已找到 1 个结果，1 个网站搜索失败，正在继续搜索…/);
   assert.match(html, /class="search-alert"/);
-  assert.match(html, /部分结果搜索失败，可能需要科学上网工具。连接后请重新加载 VS Code 窗口再试。/);
+  assert.match(html, /部分来源搜索失败，请稍后重试。/);
   assert.match(
     html,
     /\.search-alert\s*\{[^}]*color: var\(--vscode-inputValidation-warningForeground\)[^}]*background: none/s
   );
-});
-
-test('every search source declares supported data modes', () => {
-  for (const source of SEARCH_SOURCES) {
-    assert.ok(Array.isArray(source.searchModes));
-    assert.ok(source.searchModes.length);
-  }
-
-  const appSources = SEARCH_SOURCES.filter((source) =>
-    source.searchModes.some((mode) => mode.key === 'app')
-  );
-  const webSources = SEARCH_SOURCES.filter((source) =>
-    source.searchModes.some((mode) => mode.key === 'web')
-  );
-  assert.deepEqual(
-    appSources.map((source) => source.source),
-    ['qidian', 'fanqie', 'kadokado', 'qimao', 'shuqi']
-  );
-  assert.equal(webSources.length, SEARCH_SOURCES.length);
 });
 
 test('history store deduplicates and persists history', async () => {
