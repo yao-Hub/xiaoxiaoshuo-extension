@@ -127,6 +127,8 @@ async function sendAnalyticsEvent(context, event) {
 function buildSearchMetadata(page) {
   const items = Array.isArray(page?.items) ? page.items : [];
   const groups = Array.isArray(page?.groups) ? page.groups : [];
+  const filteredItems = items.filter((item) => item.requiresMembership);
+  const freeItems = items.filter((item) => !item.requiresMembership);
   const modeCounts = items.reduce(
     (counts, item) => {
       if (item.mode === 'app') counts.app += 1;
@@ -142,18 +144,22 @@ function buildSearchMetadata(page) {
       .trim()
       .slice(0, 100),
     resultCount: items.length,
-    freeResultCount: items.length,
-    hasFreeFullBook: items.length > 0,
+    freeResultCount: freeItems.length,
+    filteredResultCount: filteredItems.length,
+    hasFreeFullBook: freeItems.length > 0,
     searchMode,
     searchModes: modeCounts,
     failedSourceCount: groups.filter((group) => group.error).length,
-    sourceResults: groups.map((group) => ({
-      source: group.source,
-      label: group.label,
-      freeResultCount: Array.isArray(group.items) ? group.items.length : 0,
-      filteredResultCount: 0,
-      error: group.error || ''
-    }))
+    sourceResults: groups.map((group) => {
+      const groupItems = Array.isArray(group.items) ? group.items : [];
+      return {
+        source: group.source,
+        label: group.label,
+        freeResultCount: groupItems.filter((item) => !item.requiresMembership).length,
+        filteredResultCount: groupItems.filter((item) => item.requiresMembership).length,
+        error: group.error || ''
+      };
+    })
   };
 }
 

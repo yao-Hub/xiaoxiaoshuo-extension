@@ -47,21 +47,52 @@ test('search analytics includes queries, modes and source outcomes', () => {
     query: '辰东',
     items: [
       { text: '圣墟', mode: 'app' },
-      { text: '完美世界', mode: 'app' },
+      { text: '完美世界', mode: 'app', requiresMembership: true },
       { text: '神墓', mode: 'web' }
     ],
     groups: [
-      { source: 'qimao', label: '七猫', items: [{}, {}], error: '' },
+      {
+        source: 'qimao',
+        label: '七猫',
+        items: [{}, { requiresMembership: true }],
+        error: ''
+      },
       { source: 'qidian', label: '起点', items: [], error: '请求超时' }
     ]
   });
 
   assert.equal(metadata.query, '辰东');
   assert.equal(metadata.resultCount, 3);
+  assert.equal(metadata.freeResultCount, 2);
+  assert.equal(metadata.filteredResultCount, 1);
+  assert.equal(metadata.hasFreeFullBook, true);
   assert.deepEqual(metadata.searchModes, { app: 2, web: 1 });
   assert.equal(metadata.failedSourceCount, 1);
-  assert.equal(metadata.sourceResults[0].freeResultCount, 2);
+  assert.equal(metadata.sourceResults[0].freeResultCount, 1);
+  assert.equal(metadata.sourceResults[0].filteredResultCount, 1);
   assert.equal(metadata.sourceResults[1].error, '请求超时');
+});
+
+test('search analytics does not mark a membership-only result as free', () => {
+  const metadata = buildSearchMetadata({
+    query: '付费作品',
+    items: [{ text: '付费作品', requiresMembership: true }],
+    groups: [
+      {
+        source: 'qidian',
+        label: '起点',
+        items: [{ text: '付费作品', requiresMembership: true }],
+        error: ''
+      }
+    ]
+  });
+
+  assert.equal(metadata.resultCount, 1);
+  assert.equal(metadata.freeResultCount, 0);
+  assert.equal(metadata.filteredResultCount, 1);
+  assert.equal(metadata.hasFreeFullBook, false);
+  assert.equal(metadata.sourceResults[0].freeResultCount, 0);
+  assert.equal(metadata.sourceResults[0].filteredResultCount, 1);
 });
 
 test('reader analytics resolves book title from chapter title formats', () => {

@@ -375,7 +375,6 @@ class NovelReaderSidebarProvider {
     this.currentMode = 'title';
     this.currentQuery = value;
     this.searchInputQuery = value;
-    trackSearch(this.analyticsContext, { query: value, items: [], groups: [] });
     const sequence = ++this.loadSequence;
     const requestController = this.beginRequest();
     await this.rememberSearch(value);
@@ -420,6 +419,7 @@ class NovelReaderSidebarProvider {
         return;
       }
       this.currentPage = page;
+      trackSearch(this.analyticsContext, page);
       if (hasStreamedResults) {
         this.view.webview.postMessage({
           command: 'searchResults',
@@ -446,6 +446,7 @@ class NovelReaderSidebarProvider {
         this.navigationStack.length > 0,
         this.forwardStack.length > 0
       );
+      trackSearch(this.analyticsContext, { query: value, items: [], groups: [] }, error);
     } finally {
       this.finishRequest(requestController);
     }
