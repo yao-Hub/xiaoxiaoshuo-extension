@@ -177,10 +177,13 @@ function getReaderBookTitle(page) {
   return (separated.length > 1 ? separated.at(-1) : title).trim();
 }
 
-function trackSearch(context, page, error) {
+function trackSearch(context, page, { error, interrupted = false } = {}) {
   const metadata = buildSearchMetadata(page);
   if (error) {
     metadata.error = String(error instanceof Error ? error.message : error).slice(0, 200);
+  }
+  if (interrupted) {
+    metadata.interrupted = true;
   }
   void sendAnalyticsEvent(context, {
     eventType: 'search',

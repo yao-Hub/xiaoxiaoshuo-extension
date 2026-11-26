@@ -212,6 +212,119 @@ test('search surfaces server errors without a network-tool hint', async () => {
   );
 });
 
+test('search analytics is flushed when a partial result opens the reader', async () => {
+  const Module = require('node:module');
+  const originalLoad = Module._load;
+  const originalFetch = global.fetch;
+  const requests = [];
+  let markSearchStarted;
+  const searchStarted = new Promise((resolve) => {
+    markSearchStarted = resolve;
+  });
+
+  global.fetch = async (url, options) => {
+    requests.push({ url: String(url), body: JSON.parse(options.body) });
+    return new Response(JSON.stringify({ code: 0, msg: 'ok', data: {} }), { status: 200 });
+  };
+  Module._load = function loadModule(request, parent, isMain) {
+    if (request === 'vscode') {
+      return {};
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  let NovelReaderSidebarProvider;
+  try {
+    ({ NovelReaderSidebarProvider } = require('../src/sidebar/provider'));
+  } finally {
+    Module._load = originalLoad;
+  }
+
+  const provider = Object.create(NovelReaderSidebarProvider.prototype);
+  const requestController = new AbortController();
+  provider.analyticsContext = {
+    extension: { packageJSON: { version: '0.1.10' } },
+    globalState: {
+      get: () => 'TEST-MACHINE-ID',
+      update: async () => undefined
+    }
+  };
+  provider.historyStore = { history: [], searchHistory: [] };
+  provider.navigationStore = { backStack: [], forwardStack: [] };
+  provider.currentPage = undefined;
+  provider.loadSequence = 0;
+  provider.currentMode = 'title';
+  provider.currentQuery = '';
+  provider.searchInputQuery = '';
+  provider.view = {
+    visible: true,
+    webview: {
+      html: '',
+      postMessage() {}
+    }
+  };
+  provider.serverApi = {
+    search(_query, options) {
+      options.onGroup({
+        total: 2,
+        group: {
+          source: 'qidian',
+          label: '起点中文网',
+          count: 1,
+          filteredCount: 0,
+          error: ''
+        },
+        items: [
+          {
+            title: '完美世界',
+            author: '辰东',
+            source: 'qidian',
+            sourceLabel: '起点中文网',
+            catalogUrl: 'https://example.com/book/1/',
+            readUrl: 'https://example.com/chapter/1'
+          }
+        ],
+        filteredItems: []
+      });
+      markSearchStarted();
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            const error = new Error('请求已取消。');
+            error.name = 'AbortError';
+            reject(error);
+          },
+          { once: true }
+        );
+      });
+    }
+  };
+  provider.rememberSearch = async () => undefined;
+  provider.createProgressReporter = () => () => undefined;
+  provider.beginRequest = () => requestController;
+  provider.finishRequest = () => undefined;
+
+  try {
+    const searchPromise = provider.search('完美世界', false);
+    await searchStarted;
+    provider.loadSequence += 1;
+    requestController.abort();
+    await searchPromise;
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://xiaoxiaoshuo.top/api/extension/events');
+  assert.equal(requests[0].body.eventType, 'search');
+  assert.equal(requests[0].body.metadata.query, '完美世界');
+  assert.equal(requests[0].body.metadata.resultCount, 1);
+  assert.equal(requests[0].body.metadata.interrupted, true);
+  assert.equal(requests[0].body.metadata.error, undefined);
+});
+
 test('server catalog and chapter responses map to plugin pages', () => {
   const catalog = mapResolvedPage(
     {
@@ -444,6 +557,8 @@ test('webview renderer shows a neutral message for unavailable content', () => {
   assert.match(html, /class="content-unavailable"/);
   assert.match(html, /该章节需要会员，当前暂不提供正文。/);
   assert.match(html, /data-add-bookshelf[^>]*>加入书架<\/button>/);
+  assert.doesNotMatch(html, /<p class="source">https:\/\//);
+  assert.doesNotMatch(html, /"value":"https:\/\//);
 });
 
 test('search results are flat and always open the catalog', () => {
@@ -501,10 +616,14 @@ test('catalog unavailable page offers a start reading action', () => {
 });
 
 test('reading history starts without the legacy divider section', () => {
-  const html = renderPageHtml({}, { kind: 'history', items: [] });
+  const html = renderPageHtml({}, { kind: 'history', items: [] }, [
+    { title: '完美世界', url: 'https://example.com/book/1' }
+  ]);
 
   assert.match(html, /class="history-section-head"/);
   assert.doesNotMatch(html, /class="history-page-section"/);
+  assert.match(html, /class="history-title">完美世界<\/span>/);
+  assert.doesNotMatch(html, /<span class="history-url">https:\/\//);
 });
 
 test('bookshelf page lists saved books with a remove action', () => {
@@ -526,6 +645,8 @@ test('bookshelf page lists saved books with a remove action', () => {
   assert.match(html, /class="bookshelf-view"/);
   assert.match(html, /data-upload-local-novel[^>]*>上传本地小说<\/button>/);
   assert.match(html, /完美世界/);
+  assert.match(html, /class="history-meta">辰东<\/span>/);
+  assert.doesNotMatch(html, /<span class="history-meta">https:\/\//);
   assert.match(html, /data-remove-bookshelf="catalog:https:\/\/example\.com\/book\/1"/);
 });
 

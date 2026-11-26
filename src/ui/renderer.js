@@ -1,6 +1,7 @@
 const { renderClientScript } = require('./webview/client');
 const { WEBVIEW_STYLES } = require('./webview/styles');
 const { escapeAttribute, escapeHtml, escapeScriptJson } = require('../core/html');
+const { isLikelyUrl } = require('../core/url');
 
 function createNonce() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -13,9 +14,15 @@ function createNonce() {
   return text;
 }
 
+function getDisplayTitle(value, fallback) {
+  const text = String(value || '').trim();
+  return text && !isLikelyUrl(text) ? text : fallback;
+}
+
 function getPanelTitle(page) {
   if (page && page.kind === 'search') {
-    return page.query ? `搜索: ${page.query}` : '搜索';
+    const query = getDisplayTitle(page.query, '');
+    return query ? `搜索: ${query}` : '搜索';
   }
 
   if (page && page.kind === 'history') {
@@ -27,11 +34,13 @@ function getPanelTitle(page) {
   }
 
   if (page && page.kind === 'local-list') {
-    return page.title ? `本地: ${page.title}` : '本地小说';
+    const title = getDisplayTitle(page.title, '');
+    return title ? `本地: ${title}` : '本地小说';
   }
 
   if (page && page.kind === 'local-chapter') {
-    return page.title ? `本地阅读: ${page.title}` : '本地阅读';
+    const title = getDisplayTitle(page.title, '');
+    return title ? `本地阅读: ${title}` : '本地阅读';
   }
 
   if (!page || !page.kind) {
@@ -39,15 +48,18 @@ function getPanelTitle(page) {
   }
 
   if (page.kind === 'list') {
-    return page.title ? `列表: ${page.title}` : '列表';
+    const title = getDisplayTitle(page.title, '');
+    return title ? `列表: ${title}` : '列表';
   }
 
   if (page.kind === 'chapter') {
-    return page.title ? `阅读: ${page.title}` : '阅读';
+    const title = getDisplayTitle(page.title, '');
+    return title ? `阅读: ${title}` : '阅读';
   }
 
   if (page.kind === 'catalog-unavailable') {
-    return page.title ? `阅读: ${page.title}` : '暂无目录';
+    const title = getDisplayTitle(page.title, '');
+    return title ? `阅读: ${title}` : '暂无目录';
   }
 
   return '小小小说';
@@ -312,7 +324,7 @@ function renderHistoryPageBody(history, _searchHistory) {
   const readButtons = readItems
     .map((item) => {
       const url = typeof item === 'string' ? item : item.url || '';
-      const title = typeof item === 'string' ? item : item.title || url;
+      const title = getDisplayTitle(typeof item === 'string' ? item : item.title, '未命名阅读记录');
       if (!url) {
         return '';
       }
@@ -321,7 +333,6 @@ function renderHistoryPageBody(history, _searchHistory) {
           <input class="history-select-input" type="checkbox" data-history-select value="${escapeAttribute(url)}" aria-label="选择这条阅读历史">
           <button class="history-page-link" type="button" data-open-url="${escapeAttribute(url)}">
             <span class="history-title">${escapeHtml(title)}</span>
-            <span class="history-url">${escapeHtml(url)}</span>
           </button>
         </div>`;
     })
@@ -357,13 +368,14 @@ function renderBookshelfBody(books) {
         : `data-open-url="${escapeAttribute(item.url)}"`;
       const meta = isLocal
         ? `本地 TXT · ${Number(item.chapterCount) || 1} 章`
-        : item.author || item.url;
+        : item.author || '在线阅读';
+      const title = getDisplayTitle(item.title, '未命名书籍');
 
       return `
       <div class="bookshelf-row">
         <button class="history-page-link bookshelf-link" type="button" ${openAttribute}>
-          <span class="history-title">${escapeHtml(item.title || item.url)}</span>
-          <span class="history-url">${escapeHtml(meta)}</span>
+          <span class="history-title">${escapeHtml(title)}</span>
+          <span class="history-meta">${escapeHtml(meta)}</span>
         </button>
         <button class="bookshelf-remove" type="button" data-remove-bookshelf="${escapeAttribute(item.key)}">移出</button>
       </div>`;
@@ -400,7 +412,7 @@ function renderLocalCatalogBody(page) {
   return `
     <section class="local-catalog-view">
       <div class="local-book-summary">
-        <h1>${escapeHtml(page.title || '本地小说')}</h1>
+        <h1>${escapeHtml(getDisplayTitle(page.title, '本地小说'))}</h1>
         <p>本地 TXT · 共 ${items.length} 章</p>
       </div>
       ${
@@ -429,9 +441,9 @@ function renderLocalChapterBody(page) {
   return `
     <article class="chapter-view">
       <div class="chapter-title-row">
-        <h1>${escapeHtml(page.title || '本地阅读')}</h1>
+        <h1>${escapeHtml(getDisplayTitle(page.title, '本地阅读'))}</h1>
       </div>
-      <p class="source">${escapeHtml(page.bookTitle || '本地小说')} · 第 ${
+      <p class="source">${escapeHtml(getDisplayTitle(page.bookTitle, '本地小说'))} · 第 ${
         Number(page.localChapterIndex) + 1
       } / ${Number(page.chapterCount) || 1} 章</p>
       ${navigation('top')}
@@ -479,7 +491,7 @@ function renderSearchBody(page) {
       return `
       <div class="search-row">
         <button class="search-link" type="button" data-open-url="${escapeAttribute(catalogUrl || readingUrl)}" data-reading-url="${escapeAttribute(readingUrl)}" data-item-title="${escapeAttribute(item.text || '')}"${catalogUrl ? '' : ' data-catalog-missing="true"'}>
-          <span class="search-title">${escapeHtml(item.text || item.url)}</span>
+          <span class="search-title">${escapeHtml(getDisplayTitle(item.text, '未命名书籍'))}</span>
           ${item.meta ? `<span class="search-meta">${escapeHtml(item.meta)}</span>` : ''}
         </button>
       </div>`;
@@ -502,7 +514,7 @@ function renderSearchBody(page) {
 function renderCatalogUnavailableBody(page) {
   return `
     <section class="catalog-unavailable-view">
-      <h1>${escapeHtml(page.title || '暂无目录')}</h1>
+      <h1>${escapeHtml(getDisplayTitle(page.title, '暂无目录'))}</h1>
       <div class="status">暂无目录</div>
       <button class="button catalog-start-button" type="button" data-open-url="${escapeAttribute(page.readingUrl)}">开始阅读</button>
     </section>`;
@@ -520,7 +532,7 @@ function renderListBody(page) {
       (item) => `
       <tr>
         <td class="title-cell">
-          <button class="item-link" type="button" data-open-url="${escapeAttribute(item.url)}">${escapeHtml(item.text)}</button>
+          <button class="item-link" type="button" data-open-url="${escapeAttribute(item.url)}">${escapeHtml(getDisplayTitle(item.text, '未命名章节'))}</button>
         </td>
       </tr>`
     )
@@ -552,7 +564,7 @@ function renderTocList(items, currentUrl) {
   const rows = items
     .map((item) => {
       const isActive = item.url && item.url === currentUrl;
-      const title = escapeHtml(item.title || '未命名章节');
+      const title = escapeHtml(getDisplayTitle(item.title, '未命名章节'));
       const link = item.url
         ? `<button class="toc-link${isActive ? ' is-active' : ''}" type="button" data-open-url="${escapeAttribute(item.url)}" ${isActive ? 'aria-current="page"' : ''}>${title}</button>`
         : `<span class="toc-link toc-text">${title}</span>`;
@@ -572,10 +584,9 @@ function renderChapterBodyWithToc(page) {
   return `
     <article class="chapter-view">
       <div class="chapter-title-row">
-        <h1>${escapeHtml(page.title || '阅读')}</h1>
+        <h1>${escapeHtml(getDisplayTitle(page.title, '阅读'))}</h1>
         <button class="button chapter-shelf-button" type="button" data-add-bookshelf ${page.isInBookshelf ? 'disabled' : ''}>${page.isInBookshelf ? '已在书架' : '加入书架'}</button>
       </div>
-      <p class="source">${escapeHtml(page.url || '')}</p>
       ${renderChapterNavigation(page, 'top')}
       <div class="content">${renderChapterContent(page)}</div>
       ${renderChapterNavigation(page, 'bottom')}
@@ -619,10 +630,11 @@ function renderChapterNavigation(page, position) {
 function renderShell(webview, page) {
   const nonce = createNonce();
   const searchHistory = Array.isArray(page.searchHistory) ? page.searchHistory : [];
+  const addressValue =
+    page.kind === 'search' || page.mode === 'title' ? page.value || page.query || '' : '';
   const safeState = escapeScriptJson({
     kind: page.kind,
-    url: page.url,
-    value: page.value || (page.kind === 'search' ? page.query : page.url) || '',
+    value: isLikelyUrl(addressValue) ? '' : addressValue,
     mode: page.mode || (page.kind === 'search' ? 'title' : 'url'),
     canRefresh: Boolean(
       page.url ||

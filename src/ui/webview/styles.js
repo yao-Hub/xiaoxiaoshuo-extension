@@ -297,6 +297,10 @@ const WEBVIEW_STYLES = String.raw`
       margin-bottom: 26px;
     }
 
+    .chapter-title-row + .chapter-nav-top {
+      margin-top: 18px;
+    }
+
     .search-summary {
       margin: 8px 0 24px;
       color: var(--muted);
@@ -381,14 +385,14 @@ const WEBVIEW_STYLES = String.raw`
     }
 
     .history-title,
-    .history-url {
+    .history-meta {
       display: block;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .history-url,
+    .history-meta,
     .history-empty {
       color: var(--muted);
       font-size: 0.84rem;

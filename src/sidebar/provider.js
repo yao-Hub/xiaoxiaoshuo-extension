@@ -392,6 +392,19 @@ class NovelReaderSidebarProvider {
     );
     const reportProgress = this.createProgressReporter(sequence);
     let hasStreamedResults = false;
+    let latestSearchPage;
+    let searchTracked = false;
+    const trackCurrentSearch = (page, options = {}) => {
+      if (searchTracked) {
+        return;
+      }
+      searchTracked = true;
+      trackSearch(
+        this.analyticsContext,
+        page || latestSearchPage || { query: value, items: [], groups: [] },
+        options
+      );
+    };
 
     try {
       const page = await searchBooks(value, {
@@ -399,6 +412,7 @@ class NovelReaderSidebarProvider {
         signal: requestController.signal,
         onProgress: reportProgress,
         onPartialResults: (partialPage) => {
+          latestSearchPage = partialPage;
           if (sequence !== this.loadSequence || !this.view) {
             return;
           }
@@ -416,10 +430,11 @@ class NovelReaderSidebarProvider {
       });
       reportProgress({ fraction: 0.99, label: '正在生成搜索结果' });
       if (sequence !== this.loadSequence || !this.view) {
+        trackCurrentSearch(page, { interrupted: true });
         return;
       }
       this.currentPage = page;
-      trackSearch(this.analyticsContext, page);
+      trackCurrentSearch(page);
       if (hasStreamedResults) {
         this.view.webview.postMessage({
           command: 'searchResults',
@@ -435,6 +450,11 @@ class NovelReaderSidebarProvider {
         );
       }
     } catch (error) {
+      const interrupted =
+        error?.name === 'AbortError' ||
+        requestController.signal.aborted ||
+        sequence !== this.loadSequence;
+      trackCurrentSearch(undefined, interrupted ? { interrupted: true } : { error });
       if (sequence !== this.loadSequence || !this.view) {
         return;
       }
@@ -446,7 +466,6 @@ class NovelReaderSidebarProvider {
         this.navigationStack.length > 0,
         this.forwardStack.length > 0
       );
-      trackSearch(this.analyticsContext, { query: value, items: [], groups: [] }, error);
     } finally {
       this.finishRequest(requestController);
     }
