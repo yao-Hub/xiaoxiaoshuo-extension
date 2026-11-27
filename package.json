@@ -77,13 +77,16 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run test && npm run format:check",
+    "prepush": "npm run check",
     "package:vsix": "npx @vscode/vsce package",
-    "publish:marketplace": "npx @vscode/vsce publish"
+    "publish:marketplace": "npx @vscode/vsce publish",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
+    "husky": "^9.1.7",
     "prettier": "^3.9.10"
   }
 }
