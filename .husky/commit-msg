@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+
+message_file="$1"
+subject=$(sed -n '1p' "$message_file")
+
+case "$subject" in
+  "Merge "*)
+    exit 0
+    ;;
+esac
+
+if printf '%s\n' "$subject" | grep -Eq '^(feat|fix|perf|refactor|docs|style|test|build|revert|ci|chore|release|workflow): .+'; then
+  exit 0
+fi
+
+printf '\n提交信息格式错误：%s\n' "$subject" >&2
+printf '请使用 "<type>: <描述>"，允许的类型：feat、fix、perf、refactor、docs、style、test、build、revert、ci、chore、release、workflow。\n' >&2
+exit 1
