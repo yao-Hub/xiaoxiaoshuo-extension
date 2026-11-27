@@ -173,6 +173,10 @@ function getReaderBookTitle(page) {
   if (quoted) {
     return quoted[1].trim();
   }
+  const suffixed = title.match(/\s+[·|｜]\s+(.+)$/);
+  if (suffixed) {
+    return suffixed[1].trim();
+  }
   const separated = title.split(/\s+\|\s+/);
   return (separated.length > 1 ? separated.at(-1) : title).trim();
 }

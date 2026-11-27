@@ -956,3 +956,7 @@ test('bookshelf pages do not enter route history', () => {
   assert.equal(navigation.backAvailable, false);
   assert.equal(navigation.forwardAvailable, false);
 });
+
+test('reader analytics resolves a book title after a dot separator', () => {
+  assert.equal(getReaderBookTitle({ title: 'Chapter 1 · Book Name' }), 'Book Name');
+});
