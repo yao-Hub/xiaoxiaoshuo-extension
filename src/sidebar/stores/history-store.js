@@ -16,7 +16,7 @@ class HistoryStore {
     }
     return stored
       .map((item) => (typeof item === 'string' ? { url: item, title: item } : item))
-      .filter((item) => item && typeof item.url === 'string' && item.url)
+      .filter((item) => item && typeof item.url === 'string' && item.url && item.kind === 'chapter')
       .slice(0, MAX_HISTORY_ITEMS);
   }
 
@@ -54,11 +54,18 @@ class HistoryStore {
   }
 
   async rememberPage(page, fallbackUrl) {
+    if (page?.kind !== 'chapter') return;
     const url = page && page.url ? page.url : fallbackUrl;
     if (!url) return;
     const title = page && page.title ? page.title : url;
     this.history = [
-      { url, title, lastOpenedAt: Date.now() },
+      {
+        url,
+        title,
+        bookTitle: page.bookTitle || '',
+        kind: 'chapter',
+        lastOpenedAt: Date.now()
+      },
       ...this.history.filter((item) => item.url !== url)
     ].slice(0, MAX_HISTORY_ITEMS);
     await this.persistHistory();

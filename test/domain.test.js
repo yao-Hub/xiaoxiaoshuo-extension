@@ -243,7 +243,7 @@ test('search analytics is flushed when a partial result opens the reader', async
   const provider = Object.create(NovelReaderSidebarProvider.prototype);
   const requestController = new AbortController();
   provider.analyticsContext = {
-    extension: { packageJSON: { version: '0.1.10' } },
+    extension: { packageJSON: { version: '0.1.12' } },
     globalState: {
       get: () => 'TEST-MACHINE-ID',
       update: async () => undefined
@@ -534,8 +534,12 @@ test('webview renderer injects isolated styles and client state', () => {
   assert.match(html, /id="refresh"[^>]*aria-label="刷新当前页面"/);
   assert.match(html, /id="historyToggle"[^>]*>历史<\/button>/);
   assert.match(html, /id="bookshelfToggle"[^>]*>书架<\/button>/);
+  assert.match(html, /按回车读取/);
+  assert.doesNotMatch(html, /id="searchAction"/);
   assert.doesNotMatch(html, /id="load"/);
   assert.match(html, /toolbar\.requestSubmit\(\)/);
+  assert.match(html, /command: 'refresh'/);
+  assert.match(html, /bookTitle: target\.getAttribute\('data-book-title'\)/);
   assert.match(html, /const state =/);
   assert.doesNotMatch(html, /\$\{safeState\}/);
 });
@@ -557,6 +561,8 @@ test('webview renderer shows a neutral message for unavailable content', () => {
   assert.match(html, /class="content-unavailable"/);
   assert.match(html, /该章节需要会员，当前暂不提供正文。/);
   assert.match(html, /data-add-bookshelf[^>]*>加入书架<\/button>/);
+  assert.match(html, /id="refresh"[^>]*aria-label="刷新当前页面"/);
+  assert.doesNotMatch(html, /id="searchAction"/);
   assert.doesNotMatch(html, /<p class="source">https:\/\//);
   assert.doesNotMatch(html, /"value":"https:\/\//);
 });
@@ -596,6 +602,32 @@ test('search results are flat and always open the catalog', () => {
   assert.match(html, /class="search-results-flat"/);
   assert.match(html, /data-open-url="https:\/\/example\.com\/book\/1\/"/);
   assert.match(html, /data-reading-url="https:\/\/example\.com\/book\/1\/1\.html"/);
+  assert.match(html, /data-book-title="完美世界"/);
+});
+
+test('catalog and chapter links preserve the book title', () => {
+  const catalogHtml = renderPageHtml(
+    {},
+    {
+      kind: 'list',
+      bookTitle: '完美世界',
+      items: [{ text: '第一章', url: 'https://example.com/chapter/1' }]
+    }
+  );
+  assert.match(catalogHtml, /class="item-link"[^>]*data-book-title="完美世界"/);
+
+  const chapterHtml = renderPageHtml(
+    {},
+    {
+      kind: 'chapter',
+      bookTitle: '完美世界',
+      title: '第一章',
+      content: '正文',
+      prevUrl: 'https://example.com/chapter/0',
+      nextUrl: 'https://example.com/chapter/2'
+    }
+  );
+  assert.match(chapterHtml, /data-book-title="完美世界"/);
 });
 
 test('catalog unavailable page offers a start reading action', () => {
@@ -800,6 +832,56 @@ test('history store deduplicates and persists history', async () => {
   assert.deepEqual(store.searchHistory, ['完美世界', '盘龙']);
   await store.deleteSearchHistory('盘龙');
   assert.deepEqual(store.searchHistory, ['完美世界']);
+});
+
+test('history store records only chapter pages in reading history', async () => {
+  const values = new Map();
+  const storage = {
+    get(key, fallback) {
+      return values.has(key) ? values.get(key) : fallback;
+    },
+    async update(key, value) {
+      values.set(key, value);
+    }
+  };
+  const store = new HistoryStore(storage);
+
+  await store.rememberPage({
+    kind: 'list',
+    title: '完美世界',
+    url: 'https://example.com/book/1/'
+  });
+  assert.equal(store.history.length, 0);
+
+  await store.rememberPage({
+    kind: 'chapter',
+    title: '第一章',
+    bookTitle: '完美世界',
+    url: 'https://example.com/chapter/1'
+  });
+  assert.equal(store.history.length, 1);
+  assert.equal(store.history[0].kind, 'chapter');
+  assert.equal(store.history[0].title, '第一章');
+  assert.equal(store.history[0].bookTitle, '完美世界');
+});
+
+test('history store drops legacy mixed history without a chapter type', () => {
+  const storage = {
+    get(key, fallback) {
+      return key === 'xiaoxiaoshuo.history'
+        ? [
+            { title: '搜索点击', url: 'https://example.com/search?q=1' },
+            { title: '目录', url: 'https://example.com/book/1/' },
+            { kind: 'chapter', title: '第一章', url: 'https://example.com/chapter/1' }
+          ]
+        : fallback;
+    }
+  };
+  const store = new HistoryStore(storage);
+
+  assert.deepEqual(store.history, [
+    { kind: 'chapter', title: '第一章', url: 'https://example.com/chapter/1' }
+  ]);
 });
 
 test('bookshelf store persists books and avoids duplicates', async () => {

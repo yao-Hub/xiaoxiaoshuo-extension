@@ -200,7 +200,7 @@ function renderPageHtml(webview, page, history = [], searchHistory = []) {
       forwardAvailable: Boolean(page.forwardAvailable),
       history,
       searchHistory,
-      body: renderHistoryPageBody(history, searchHistory)
+      body: renderHistoryPageBody(history)
     });
   }
 
@@ -319,7 +319,7 @@ function renderHistoryPage(
   );
 }
 
-function renderHistoryPageBody(history, _searchHistory) {
+function renderHistoryPageBody(history) {
   const readItems = Array.isArray(history) ? history.slice(0, 20) : [];
   const readButtons = readItems
     .map((item) => {
@@ -331,7 +331,7 @@ function renderHistoryPageBody(history, _searchHistory) {
       return `
         <div class="history-page-row">
           <input class="history-select-input" type="checkbox" data-history-select value="${escapeAttribute(url)}" aria-label="选择这条阅读历史">
-          <button class="history-page-link" type="button" data-open-url="${escapeAttribute(url)}">
+          <button class="history-page-link" type="button" data-open-url="${escapeAttribute(url)}" data-book-title="${escapeAttribute(item.bookTitle || '')}">
             <span class="history-title">${escapeHtml(title)}</span>
           </button>
         </div>`;
@@ -490,7 +490,7 @@ function renderSearchBody(page) {
       const catalogUrl = item.chaptersUrl || '';
       return `
       <div class="search-row">
-        <button class="search-link" type="button" data-open-url="${escapeAttribute(catalogUrl || readingUrl)}" data-reading-url="${escapeAttribute(readingUrl)}" data-item-title="${escapeAttribute(item.text || '')}"${catalogUrl ? '' : ' data-catalog-missing="true"'}>
+        <button class="search-link" type="button" data-open-url="${escapeAttribute(catalogUrl || readingUrl)}" data-reading-url="${escapeAttribute(readingUrl)}" data-item-title="${escapeAttribute(item.text || '')}" data-book-title="${escapeAttribute(item.text || '')}"${catalogUrl ? '' : ' data-catalog-missing="true"'}>
           <span class="search-title">${escapeHtml(getDisplayTitle(item.text, '未命名书籍'))}</span>
           ${item.meta ? `<span class="search-meta">${escapeHtml(item.meta)}</span>` : ''}
         </button>
@@ -532,7 +532,7 @@ function renderListBody(page) {
       (item) => `
       <tr>
         <td class="title-cell">
-          <button class="item-link" type="button" data-open-url="${escapeAttribute(item.url)}">${escapeHtml(getDisplayTitle(item.text, '未命名章节'))}</button>
+          <button class="item-link" type="button" data-open-url="${escapeAttribute(item.url)}" data-book-title="${escapeAttribute(getDisplayTitle(page.bookTitle, ''))}">${escapeHtml(getDisplayTitle(item.text, '未命名章节'))}</button>
         </td>
       </tr>`
     )
@@ -556,21 +556,21 @@ function renderTocBody(page) {
   return `
     <section class="toc-section">
       <h2>目录</h2>
-      ${renderTocList(items, page.url || '')}
+      ${renderTocList(items, page.url || '', page.bookTitle || '')}
     </section>`;
 }
 
-function renderTocList(items, currentUrl) {
+function renderTocList(items, currentUrl, bookTitle) {
   const rows = items
     .map((item) => {
       const isActive = item.url && item.url === currentUrl;
       const title = escapeHtml(getDisplayTitle(item.title, '未命名章节'));
       const link = item.url
-        ? `<button class="toc-link${isActive ? ' is-active' : ''}" type="button" data-open-url="${escapeAttribute(item.url)}" ${isActive ? 'aria-current="page"' : ''}>${title}</button>`
+        ? `<button class="toc-link${isActive ? ' is-active' : ''}" type="button" data-open-url="${escapeAttribute(item.url)}" data-book-title="${escapeAttribute(bookTitle)}" ${isActive ? 'aria-current="page"' : ''}>${title}</button>`
         : `<span class="toc-link toc-text">${title}</span>`;
       const children =
         item.children && item.children.length
-          ? `<div class="toc-children">${renderTocList(item.children, currentUrl)}</div>`
+          ? `<div class="toc-children">${renderTocList(item.children, currentUrl, bookTitle)}</div>`
           : '';
 
       return `<li class="toc-item">${link}${children}</li>`;
@@ -621,9 +621,9 @@ function renderChapterNavigation(page, position) {
 
   return `
     <nav class="chapter-nav${position === 'top' ? ' chapter-nav-top' : ''}" aria-label="章节导航">
-      <button class="nav-button" type="button" data-open-url="${escapeAttribute(page.prevUrl || '')}" ${page.prevUrl ? '' : 'disabled'}>上一章</button>
-      <button class="nav-button nav-directory" type="button" ${directoryAttributes}>目录</button>
-      <button class="nav-button" type="button" data-open-url="${escapeAttribute(page.nextUrl || '')}" ${page.nextUrl ? '' : 'disabled'}>下一章</button>
+      <button class="nav-button" type="button" data-open-url="${escapeAttribute(page.prevUrl || '')}" data-book-title="${escapeAttribute(page.bookTitle || '')}" ${page.prevUrl ? '' : 'disabled'}>上一章</button>
+      <button class="nav-button nav-directory" type="button" ${directoryAttributes} data-book-title="${escapeAttribute(page.bookTitle || '')}">目录</button>
+      <button class="nav-button" type="button" data-open-url="${escapeAttribute(page.nextUrl || '')}" data-book-title="${escapeAttribute(page.bookTitle || '')}" ${page.nextUrl ? '' : 'disabled'}>下一章</button>
     </nav>`;
 }
 
@@ -636,14 +636,6 @@ function renderShell(webview, page) {
     kind: page.kind,
     value: isLikelyUrl(addressValue) ? '' : addressValue,
     mode: page.mode || (page.kind === 'search' ? 'title' : 'url'),
-    canRefresh: Boolean(
-      page.url ||
-      page.mode === 'title' ||
-      page.kind === 'search' ||
-      page.kind === 'history' ||
-      page.kind === 'local-list' ||
-      page.kind === 'local-chapter'
-    ),
     title: page.title,
     canGoBack: Boolean(page.backAvailable),
     canGoForward: Boolean(page.forwardAvailable)
@@ -661,6 +653,13 @@ function renderShell(webview, page) {
     page.kind === 'local-chapter'
       ? ''
       : 'disabled';
+  const refreshAction = `
+      <button class="button icon-button" id="refresh" type="button" title="刷新当前页面" aria-label="刷新当前页面" ${refreshDisabled}>
+        <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+          <path d="M21 3v6h-6"></path>
+        </svg>
+      </button>`;
   const loadingProgress =
     page.kind === 'loading'
       ? '<div class="loading-progress" role="progressbar" aria-label="加载中" aria-valuemin="0" aria-valuemax="100" aria-valuenow="3"><div class="loading-progress-bar"></div></div>'
@@ -691,12 +690,7 @@ function renderShell(webview, page) {
       <div class="address-group" id="addressGroup">
         <input class="address" id="address" type="url" aria-label="地址" spellcheck="false">
       </div>
-      <button class="button icon-button" id="refresh" type="button" title="刷新当前页面" aria-label="刷新当前页面" ${refreshDisabled}>
-        <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
-          <path d="M21 3v6h-6"></path>
-        </svg>
-      </button>
+      ${refreshAction}
       <button class="button" id="historyToggle" type="button" title="历史记录" aria-expanded="false">历史</button>
       <button class="button" id="bookshelfToggle" type="button" title="我的书架" aria-expanded="false">书架</button>
     </form>

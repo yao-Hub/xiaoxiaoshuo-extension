@@ -256,6 +256,7 @@ const CLIENT_SCRIPT = String.raw`
           url,
           readingUrl: target.getAttribute('data-reading-url') || '',
           title: target.getAttribute('data-item-title') || '',
+          bookTitle: target.getAttribute('data-book-title') || '',
           catalogMissing: target.hasAttribute('data-catalog-missing'),
           openKind:
             target.classList.contains('search-link') ||

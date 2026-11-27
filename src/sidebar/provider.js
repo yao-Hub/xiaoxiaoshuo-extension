@@ -250,7 +250,8 @@ class NovelReaderSidebarProvider {
         await this.openUrl(normalized.url, {
           preserveSearchInput: true,
           fallbackUrl,
-          title: message.title
+          title: message.title,
+          bookTitle: message.bookTitle
         });
         return;
       }
@@ -837,7 +838,12 @@ class NovelReaderSidebarProvider {
       if (!force) {
         const cachedPage = this.getCachedPage(url);
         if (cachedPage) {
-          await this.renderLoadedPage(cachedPage, url, sequence);
+          const page =
+            pageOptions.bookTitle && !cachedPage.bookTitle
+              ? { ...cachedPage, bookTitle: String(pageOptions.bookTitle) }
+              : cachedPage;
+          this.storePage(url, page);
+          await this.renderLoadedPage(page, url, sequence);
           return;
         }
       }
@@ -851,7 +857,10 @@ class NovelReaderSidebarProvider {
         this.forwardStack.length > 0
       );
       const reportProgress = this.createProgressReporter(sequence);
-      const page = await this.fetchPage(url, reportProgress, requestController.signal);
+      let page = await this.fetchPage(url, reportProgress, requestController.signal);
+      if (pageOptions.bookTitle && !page.bookTitle) {
+        page = { ...page, bookTitle: String(pageOptions.bookTitle) };
+      }
       if (
         pageOptions.fallbackUrl &&
         page.kind === 'list' &&
